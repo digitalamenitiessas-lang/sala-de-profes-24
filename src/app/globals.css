@@ -1,0 +1,490 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ------------------------------------------------------------------
+   MADE Awelier — Branding font for La Vieja Escuela
+   ------------------------------------------------------------------
+   Add your MADE Awelier font files (.woff2, .woff) to public/fonts/
+   Then uncomment the block below. It will automatically replace the
+   Playfair Display fallback via the font-display utility class.
+   ------------------------------------------------------------------ */
+/*
+@font-face {
+  font-family: 'MADE Awelier';
+  src: url('/fonts/MADEAwelier.woff2') format('woff2'),
+       url('/fonts/MADEAwelier.woff') format('woff');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+*/
+
+/* =================================================================== */
+/* La Vieja Escuela — Premium Design System v2                         */
+/* Verde Inglés · Crema · Piedra · Espresso · Cobre · Rojo · Amber    */
+/* =================================================================== */
+
+@theme inline {
+  /* Core fonts */
+  --font-sans: var(--font-barlow), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-playfair), Georgia, 'Times New Roman', serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Fira Code', monospace;
+
+  /* Semantic colors → Tailwind utilities */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ----------------------------------------------------------------- */
+  /* LVE Extended Palette — Warm, editorial, brand-driven              */
+  /* ----------------------------------------------------------------- */
+
+  /* Verde Inglés — Brand primary */
+  --color-lve-verde: #006d5a;
+  --color-lve-verde-dark: #004d3f;
+  --color-lve-verde-light: #e8f5f1;
+  --color-lve-verde-mist: #f0f7f5;
+
+  /* Rojo — Destructive & critical only */
+  --color-lve-rojo: #ea504c;
+  --color-lve-rojo-light: #fef2f2;
+
+  /* Amber — Warm warnings & secondary accents */
+  --color-lve-amber: #d4943a;
+  --color-lve-amber-light: #fdf6ec;
+
+  /* Warm neutrals — Surfaces & atmosphere */
+  --color-lve-crema: #faf8f5;
+  --color-lve-paper: #fefcf9;
+  --color-lve-piedra: #ebe6df;
+  --color-lve-smoke: #a39e97;
+  --color-lve-espresso: #3d2c24;
+  --color-lve-cafe: #8b7355;
+  --color-lve-cobre: #b8906e;
+  --color-lve-oliva: #5a6b52;
+
+  /* Radius scale */
+  --radius-sm: calc(var(--radius) * 0.5);
+  --radius-md: calc(var(--radius) * 0.75);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.5);
+  --radius-2xl: calc(var(--radius) * 2);
+  --radius-3xl: calc(var(--radius) * 2.5);
+  --radius-4xl: calc(var(--radius) * 3);
+}
+
+:root {
+  /* ================================================================ */
+  /* Light — Warm, cream-based, editorial                             */
+  /* ================================================================ */
+
+  /* Surfaces — warm cream, not cold white */
+  --background: #faf8f5;
+  --foreground: #2c2420;
+  --card: #fefcf9;
+  --card-foreground: #2c2420;
+  --popover: #fefcf9;
+  --popover-foreground: #2c2420;
+
+  /* Primary — Verde Inglés, deep & elegant */
+  --primary: #006d5a;
+  --primary-foreground: #ffffff;
+
+  /* Secondary — Piedra suave */
+  --secondary: #f3efe9;
+  --secondary-foreground: #5c534a;
+
+  /* Muted — Stone */
+  --muted: #f3efe9;
+  --muted-foreground: #8a8178;
+
+  /* Accent — Verde mist */
+  --accent: #f0f7f5;
+  --accent-foreground: #006d5a;
+
+  /* Destructive */
+  --destructive: #ea504c;
+
+  /* Warning — Warm amber (not neon yellow) */
+  --warning: #d4943a;
+  --warning-foreground: #ffffff;
+
+  /* Borders — barely there, warm */
+  --border: #ebe6df;
+  --input: #e4ded6;
+  --ring: #006d5a;
+
+  /* Charts */
+  --chart-1: #006d5a;
+  --chart-2: #5a6b52;
+  --chart-3: #d4943a;
+  --chart-4: #ea504c;
+  --chart-5: #b8906e;
+
+  /* Radius — generous, soft */
+  --radius: 0.875rem;
+
+  /* Sidebar */
+  --sidebar: #006d5a;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #006d5a;
+  --sidebar-accent: rgba(255, 255, 255, 0.1);
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(255, 255, 255, 0.12);
+  --sidebar-ring: #ffffff;
+}
+
+.dark {
+  --background: #121110;
+  --foreground: #ebe6df;
+  --card: #1c1917;
+  --card-foreground: #ebe6df;
+  --popover: #1c1917;
+  --popover-foreground: #ebe6df;
+  --primary: #4dd8b4;
+  --primary-foreground: #121110;
+  --secondary: #262220;
+  --secondary-foreground: #ebe6df;
+  --muted: #262220;
+  --muted-foreground: #8a8178;
+  --accent: #1a2e26;
+  --accent-foreground: #4dd8b4;
+  --destructive: #f87171;
+  --warning: #fbbf24;
+  --warning-foreground: #121110;
+  --border: rgba(235, 230, 223, 0.08);
+  --input: rgba(235, 230, 223, 0.1);
+  --ring: #4dd8b4;
+  --chart-1: #4dd8b4;
+  --chart-2: #6ee7c2;
+  --chart-3: #fbbf24;
+  --chart-4: #f87171;
+  --chart-5: #fb923c;
+  --sidebar: #1c1917;
+  --sidebar-foreground: #ebe6df;
+  --sidebar-primary: #4dd8b4;
+  --sidebar-primary-foreground: #121110;
+  --sidebar-accent: rgba(77, 216, 180, 0.08);
+  --sidebar-accent-foreground: #ebe6df;
+  --sidebar-border: rgba(235, 230, 223, 0.08);
+  --sidebar-ring: #4dd8b4;
+}
+
+/* =================================================================== */
+/* Base Layer                                                          */
+/* =================================================================== */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  html {
+    @apply scroll-smooth;
+  }
+}
+
+/* =================================================================== */
+/* Premium Utility Classes                                             */
+/* =================================================================== */
+
+@layer utilities {
+  /* Elevated card — warm shadow, paper surface */
+  .card-elevated {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow:
+      0 1px 2px rgba(44, 36, 32, 0.04),
+      0 4px 12px rgba(44, 36, 32, 0.03);
+  }
+
+  .card-elevated-lg {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) * 1.5);
+    box-shadow:
+      0 1px 3px rgba(44, 36, 32, 0.05),
+      0 8px 24px rgba(44, 36, 32, 0.04);
+  }
+
+  /* Interactive lift */
+  .hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    will-change: transform;
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 2px 4px rgba(44, 36, 32, 0.06),
+      0 8px 20px rgba(44, 36, 32, 0.05);
+  }
+  .hover-lift:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  /* Press feedback — for touch targets */
+  .press-scale {
+    transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    will-change: transform;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .press-scale:active {
+    transform: scale(0.97);
+  }
+
+  /* Card with press interaction */
+  .card-interactive {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow:
+      0 1px 2px rgba(44, 36, 32, 0.04),
+      0 4px 12px rgba(44, 36, 32, 0.03);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    will-change: transform;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .card-interactive:active {
+    transform: scale(0.98);
+    box-shadow: 0 1px 2px rgba(44, 36, 32, 0.06);
+  }
+  .card-interactive:hover {
+    border-color: rgba(0, 109, 90, 0.15);
+  }
+
+  /* Page title utility */
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #3d2c24;
+  }
+
+  /* Editorial section label */
+  .section-label {
+    font-family: var(--font-barlow), sans-serif;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
+
+  /* Form label standard */
+  .form-label {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #3d2c24;
+  }
+
+  /* Glass effect for overlays */
+  .glass {
+    backdrop-filter: blur(12px) saturate(1.8);
+    -webkit-backdrop-filter: blur(12px) saturate(1.8);
+    background: rgba(254, 252, 249, 0.85);
+  }
+
+  /* ---------------------------------------------------------------
+     STANDARDIZED UI COMPONENTS
+     --------------------------------------------------------------- */
+
+  /* Touch target — minimum 44px for accessibility */
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Icon button — standard touchable icon */
+  .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.75rem;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .icon-btn:active {
+    transform: scale(0.92);
+  }
+
+  /* Action button — labeled button for actions */
+  .action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .action-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* Standard input — h-12 with consistent styling */
+  .input-standard {
+    height: 3rem;
+    padding: 0 0.875rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border);
+    background: var(--card);
+    font-size: 0.9375rem;
+    color: #3d2c24;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .input-standard:focus {
+    outline: none;
+    border-color: #006d5a;
+    box-shadow: 0 0 0 2px rgba(0, 109, 90, 0.15);
+  }
+  .input-standard::placeholder {
+    color: var(--muted-foreground);
+    opacity: 0.6;
+  }
+
+  /* FAB — floating action button */
+  .fab {
+    position: fixed;
+    bottom: 5.5rem;
+    right: 1rem;
+    z-index: 30;
+    width: 3.5rem;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: #006d5a;
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 109, 90, 0.3), 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .fab:active {
+    transform: scale(0.92);
+  }
+  .fab:hover {
+    box-shadow: 0 6px 20px rgba(0, 109, 90, 0.4), 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+
+  /* KPI card — standard metrics card */
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    box-shadow: 0 1px 2px rgba(44, 36, 32, 0.04);
+  }
+
+  /* Pill filter button */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.875rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    transition: all 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pill:active {
+    transform: scale(0.95);
+  }
+  .pill-active {
+    background: #006d5a;
+    color: white;
+  }
+  .pill-inactive {
+    background: var(--secondary);
+    color: var(--muted-foreground);
+  }
+  .pill-inactive:hover {
+    color: #3d2c24;
+  }
+}
+
+/* ===================================================================
+   Reduced motion — respect user preference
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .press-scale:active,
+  .card-interactive:active {
+    transform: none !important;
+  }
+}
+
+/* ===================================================================
+   Splash screen — coffee wiggle (CSS, not framer-motion, so it doesn't
+   block AnimatePresence mode="wait" on exit)
+   =================================================================== */
+@keyframes coffee-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20%       { transform: rotate(15deg); }
+  40%       { transform: rotate(-15deg); }
+  60%       { transform: rotate(10deg); }
+  80%       { transform: rotate(-10deg); }
+}
+
+.animate-coffee {
+  animation: coffee-wiggle 1.5s ease-in-out infinite;
+  display: inline-block;
+}

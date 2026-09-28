@@ -1,0 +1,98 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { cargarDatosCierre, cierrePrevisto } from '@/lib/attendance/jornada'
+import { logAudit } from '@/lib/audit'
+
+// ---------------------------------------------------------------------------
+// GET /api/cron/auto-clockout
+// Lo llama el cron de Vercel una vez por día (16:00 Argentina: el plan solo
+// permite crons diarios). Cierra los fichajes que quedaron abiertos cuando ya
+// pasó su hora prevista de salida (turno o cierre del local).
+// ---------------------------------------------------------------------------
+
+export const dynamic = 'force-dynamic'
+
+export async function GET(request: NextRequest) {
+  const authHeader = request.headers.get('authorization')
+  const cronSecret = process.env.CRON_SECRET
+  if (process.env.NODE_ENV === 'production') {
+    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+  }
+
+  try {
+    const admin = createAdminClient()
+    const now = new Date()
+
+    // Fichajes abiertos (alguien se olvidó de marcar la salida)
+    const { data: openLogs } = await admin
+      .from('attendance_logs')
+      .select('id, user_id, clock_in_at, operative_date')
+      .is('clock_out_at', null)
+      .eq('status', 'open')
+
+    if (!openLogs?.length) {
+      return NextResponse.json({ message: 'No open shifts to close', closed: 0 })
+    }
+
+    // Hora prevista de salida: su turno de ese día o el cierre del local
+    // (misma regla que al fichar; ver lib/attendance/jornada.ts). Solo se
+    // cierra si esa hora ya pasó.
+    const datos = await cargarDatosCierre(admin, openLogs.map((l) => l.operative_date))
+
+    let closed = 0
+    const details: string[] = []
+
+    for (const log of openLogs) {
+      const cierre = cierrePrevisto(log, datos)
+      if (now < cierre.at) continue
+
+      const { data: profile } = await admin
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', log.user_id)
+        .single()
+      const empName = profile ? `${profile.first_name} ${profile.last_name}` : '?'
+      const hora = cierre.at.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' })
+
+      const { error } = await admin
+        .from('attendance_logs')
+        .update({
+          clock_out_at: cierre.at.toISOString(),
+          status: 'closed',
+          clock_out_type: 'auto',
+          notes: `Salida no marcada: cerrado a las ${hora} (${cierre.fuente})`,
+        })
+        .eq('id', log.id)
+        .eq('status', 'open')
+
+      if (!error) {
+        closed++
+        details.push(`${empName}: ${hora} (${cierre.fuente})`)
+      }
+    }
+
+    // Audit trail (non-blocking)
+    if (closed > 0) {
+      logAudit(admin, {
+        userId: null,
+        userName: 'Sistema',
+        action: 'auto_clockout',
+        module: 'asistencia',
+        entityType: 'attendance_log',
+        description: `Auto-egreso de ${closed} empleados`,
+      })
+    }
+
+    return NextResponse.json({
+      message: `Auto clock-out: ${closed}/${openLogs.length} cerrados`,
+      closed,
+      total: openLogs.length,
+      details,
+    })
+  } catch (error) {
+    console.error('[auto-clockout]', error)
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Error' }, { status: 500 })
+  }
+}
