@@ -11,7 +11,7 @@ const MANAGER_ROLES: ReadonlySet<string> = new Set(['socio', 'encargado'])
  * Se listan por UUID para evitar colisiones por nombre.
  */
 const SOCIOS_QUE_FICHAN: ReadonlySet<string> = new Set([
-  'd058c880-9ec3-4205-be49-84476da0b2d6', // Ricardo Marquez
+  // '<uuid del perfil>', // Nombre Apellido
 ])
 
 /** ¿Este perfil debe fichar ingreso/egreso? */

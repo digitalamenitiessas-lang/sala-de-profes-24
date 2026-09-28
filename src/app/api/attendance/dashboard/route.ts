@@ -112,7 +112,7 @@ export async function GET(request: Request) {
   const shiftsByUser = new Map<string, ShiftRow[]>()
   for (const s of shifts) shiftsByUser.set(s.user_id, [...(shiftsByUser.get(s.user_id) ?? []), s])
 
-  // Quien tiene que fichar (incluye socios que fichan, ej. Ricardo)
+  // Quien tiene que fichar (incluye socios que fichan, ver SOCIOS_QUE_FICHAN)
   const employees = (profilesRes.data ?? []).filter((p) => mustClockIn(p) || (TEAM_ROLES as readonly string[]).includes(p.role)).map((p) => {
     const myLogs = (logsByUser.get(p.id) ?? []).sort((a, b) => a.clock_in_at.localeCompare(b.clock_in_at))
     const myShifts = shiftsByUser.get(p.id) ?? []

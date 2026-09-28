@@ -20,14 +20,14 @@ import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
 import { getDeviceFingerprint, getNetworkInfo } from '@/lib/attendance/security'
 import { getCurrentPosition, calculateDistance } from '@/lib/attendance/geolocation'
-import { VENUE } from '@/lib/attendance/venue'
+import { VENUE, VENUE_CONFIGURED } from '@/lib/attendance/venue'
 import { logAuditClient } from '@/lib/audit'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 type FlowState = 'idle' | 'working' | 'done'
-type GeoState = 'checking' | 'ok' | 'too_far' | 'denied' | 'unavailable'
+type GeoState = 'checking' | 'ok' | 'too_far' | 'denied' | 'unavailable' | 'no_venue'
 
 // ---------------------------------------------------------------------------
 function getGreeting(d: Date) {
@@ -80,6 +80,10 @@ export default function MiTurnoPage() {
 
   // Geo check — runs on load and every 30s
   const checkGeo = useCallback(async () => {
+    if (!VENUE_CONFIGURED) {
+      setGeoState('no_venue')
+      return
+    }
     setGeoState('checking')
     const result = await getCurrentPosition()
     if (result.status === 'denied') {
@@ -238,7 +242,7 @@ export default function MiTurnoPage() {
   // ------------------------------------------
   // Geo status indicator config
   // ------------------------------------------
-  const geoBlocked = geoState === 'too_far' || geoState === 'denied'
+  const geoBlocked = geoState === 'too_far' || geoState === 'denied' || geoState === 'no_venue'
 
   const GEO_CONFIG = {
     ok:          { icon: ShieldCheck, text: `En ${VENUE.name} ✓`,                 cls: 'bg-[#e8f5f1] text-[#006d5a]' },
@@ -246,6 +250,7 @@ export default function MiTurnoPage() {
     too_far:     { icon: MapPin,      text: geoDistance ? `Estás a ${geoDistance}m · Necesitás estar en el local` : 'Fuera del local', cls: 'bg-[#fef2f2] text-[#ea504c]' },
     denied:      { icon: ShieldAlert, text: 'Permiso de GPS denegado — activalo en ajustes', cls: 'bg-[#fef2f2] text-[#ea504c]' },
     unavailable: { icon: MapPin,      text: 'GPS no disponible',                  cls: 'bg-[#fdf6ec] text-[#d4943a]' },
+    no_venue:    { icon: MapPin,      text: 'Falta configurar la ubicación del local', cls: 'bg-[#fdf6ec] text-[#d4943a]' },
   }
   const geo = GEO_CONFIG[geoState]
   const GeoIcon = geo.icon

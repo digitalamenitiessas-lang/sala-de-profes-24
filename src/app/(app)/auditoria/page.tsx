@@ -175,9 +175,8 @@ export default function AuditoriaPage() {
     fetchEntries(nextPage, true)
   }
 
-  // Access check: socios + Ricardo Marquez
-  const RICARDO_ID = 'd058c880-9ec3-4205-be49-84476da0b2d6'
-  const canAccess = profile?.role === 'socio' || profile?.id === RICARDO_ID
+  // Access check: solo socios
+  const canAccess = profile?.role === 'socio'
 
   if (profileLoading) return <LoadingState />
 

@@ -67,6 +67,13 @@ export async function POST(request: Request) {
     ? (venueConfig.value as VenueConfig)
     : { lat: VENUE.lat, lng: VENUE.lng, radius_meters: VENUE.radiusM, name: VENUE.name }
 
+  if (!Number.isFinite(venue.lat) || !Number.isFinite(venue.lng)) {
+    return NextResponse.json({
+      error: 'La ubicación del local no está configurada. Avisale a un encargado.',
+      code: 'VENUE_NOT_CONFIGURED',
+    }, { status: 503 })
+  }
+
   // GPS es obligatorio cuando hay configuración de local
   if (!gps_lat || !gps_lng) {
     return NextResponse.json({

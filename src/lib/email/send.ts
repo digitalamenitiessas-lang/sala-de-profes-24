@@ -10,6 +10,10 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null
 const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <info@laviejaescuelabar.com.ar>'
+// URL pública de la app para el botón de los mails. Vercel completa
+// VERCEL_PROJECT_PRODUCTION_URL solo; NEXT_PUBLIC_APP_URL la pisa (dominio propio).
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL
+  ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -73,13 +77,13 @@ function wrapTemplate(title: string, body: string): string {
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; background: #faf8f5; border-radius: 16px; overflow: hidden;">
       <div style="background: #006d5a; padding: 20px 24px;">
         <h1 style="color: white; margin: 0; font-size: 16px; font-weight: 600;">🏫 Sala de Profes</h1>
-        <p style="color: rgba(255,255,255,0.6); margin: 4px 0 0; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;">La Vieja Escuela</p>
+        <p style="color: rgba(255,255,255,0.6); margin: 4px 0 0; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;">La Vieja Escuela · 24 y Maipú</p>
       </div>
       <div style="padding: 24px;">
         <h2 style="color: #3d2c24; margin: 0 0 16px; font-size: 18px;">${title}</h2>
         ${body}
         <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid #ebe6df;">
-          <a href="https://sala-de-profes-lve.vercel.app" style="display: inline-block; background: #006d5a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;">
+          <a href="${APP_URL}" style="display: inline-block; background: #006d5a; color: white; text-decoration: none; padding: 10px 20px; border-radius: 10px; font-size: 13px; font-weight: 600;">
             Abrir Sala de Profes
           </a>
         </div>
