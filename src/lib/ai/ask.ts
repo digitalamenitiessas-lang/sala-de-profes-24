@@ -16,6 +16,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
 import { isStockArea, areaFromLveCategory, AREA_LABEL, type StockArea } from '@/lib/stock/areas'
 import { aggregateVentas, type VentasCanal } from '@/lib/ventas/aggregate'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 // ---------------------------------------------------------------------------
 // Contrato
@@ -279,9 +280,9 @@ Respondé SOLO el JSON, sin explicación, sin markdown. Si la pregunta no encaja
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...OPENROUTER_APP_HEADERS },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0,
         max_tokens: 200,
         messages: [

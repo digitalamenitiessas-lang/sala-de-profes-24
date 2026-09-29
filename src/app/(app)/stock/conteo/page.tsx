@@ -182,7 +182,11 @@ function ConteoContent() {
     }
     setSavingId(item.id)
     try {
-      const note = noteGiven || (modo === 'cero' ? DEFAULT_CERO_NOTE : undefined)
+      // En modo cero la nota siempre arranca con DEFAULT_CERO_NOTE: stock-sync la
+      // reconoce por ese prefijo para no mandar un aviso por cada insumo.
+      const note = modo === 'cero'
+        ? (noteGiven ? `${DEFAULT_CERO_NOTE}: ${noteGiven}` : DEFAULT_CERO_NOTE)
+        : (noteGiven || undefined)
       const res = await fetch('/api/stock/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

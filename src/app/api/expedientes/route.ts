@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
@@ -120,14 +120,15 @@ export async function POST(request: NextRequest) {
     // Get author name and email socios
     const { data: profile } = await admin.from('profiles').select('first_name, last_name').eq('id', user.id).single()
     const authorName = profile ? `${profile.first_name} ${profile.last_name}`.trim() : 'Alguien'
-    notifyExpedienteToResponsible({
+    // Aviso después de responder: after() evita que Vercel lo corte
+    after(() => notifyExpedienteToResponsible({
       responsibleId: responsible_id || null,
       code: data.code,
       title: title.trim(),
       action: 'Expediente creado',
       authorName,
       detail: description?.trim() || undefined,
-    }).catch(() => {})
+    }).catch(() => {}))
 
     // Audit trail (non-blocking)
     logAudit(admin, {

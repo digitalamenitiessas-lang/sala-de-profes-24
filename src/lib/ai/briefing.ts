@@ -8,6 +8,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isStockCritical } from '@/lib/contracts/stock'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 export type BriefingData = {
   stockCritical: { name: string; qty: number; min: number; supplier: string | null }[]
@@ -157,9 +158,10 @@ Si no hay problemas, decilo brevemente y mencioná lo positivo.`
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        ...OPENROUTER_APP_HEADERS,
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0.3,
         max_tokens: 300,
         messages: [
@@ -173,7 +175,7 @@ Si no hay problemas, decilo brevemente y mencioná lo positivo.`
     const json = await res.json()
     const text = json.choices?.[0]?.message?.content?.trim()
     if (!text) throw new Error('Empty response')
-    return { text, model: json.model ?? 'anthropic/claude-sonnet-4' }
+    return { text, model: json.model ?? OPENROUTER_MODEL }
   } catch {
     return { text: buildFallbackBriefing(data), model: null }
   }

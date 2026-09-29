@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteAssignment } from '@/lib/email/send'
@@ -154,13 +154,13 @@ export async function PATCH(
         metadata: { responsible_id: body.responsible_id },
       })
 
-      // Email only to the assigned person
-      notifyExpedienteAssignment({
+      // Email only to the assigned person (after(): que Vercel no lo corte al responder)
+      after(() => notifyExpedienteAssignment({
         userId: body.responsible_id,
         code: existing.code,
         title: existing.title ?? existing.code,
         assignedBy: authorName,
-      }).catch(() => {})
+      }).catch(() => {}))
     }
 
     // Audit trail (non-blocking)

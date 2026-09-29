@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados } from '@/lib/email/send'
@@ -157,15 +157,16 @@ export async function POST(request: NextRequest) {
           is_active: true,
         })
 
-        // Email to encargados + socios (sin el creador: no se autonotifica)
-        notifyOrderToEncargados({
+        // Email to encargados + socios (sin el creador: no se autonotifica).
+        // after(): los avisos corren después de responder sin que Vercel los corte.
+        after(() => notifyOrderToEncargados({
           type: 'cocina',
           authorName,
           items: items.map((i) => ({ name: i.product_name, quantity: i.quantity })),
           urgency: orderUrgency,
           note,
           excludeUserId: user.id,
-        }).catch(() => {})
+        }).catch(() => {}))
 
         const pushSummary = items
           .map((i) => {
@@ -174,11 +175,11 @@ export async function POST(request: NextRequest) {
           })
           .join(', ')
 
-        notifyEvent(admin, 'purchase_created', {
+        after(() => notifyEvent(admin, 'purchase_created', {
           title: '🛒 Nuevo pedido de cocina',
           body: `${authorName}: ${pushSummary}`,
           url: '/pedidos',
-        }, { excludeUserId: user.id }).catch(() => {})
+        }, { excludeUserId: user.id }).catch(() => {}))
       }
 
       return NextResponse.json({ success: true, count: items.length })
@@ -292,12 +293,13 @@ export async function POST(request: NextRequest) {
           // Email to order creator
           try {
             const { notifyOrderStatusChange } = await import('@/lib/email/send')
-            notifyOrderStatusChange({
-              userId: order.created_by,
+            const creadorId = order.created_by // const: dentro del callback se pierde el narrowing
+            after(() => notifyOrderStatusChange({
+              userId: creadorId,
               productName: order.product_name,
               quantity: order.quantity,
               newStatus: status as 'ordered' | 'received' | 'cancelled',
-            }).catch(() => {})
+            }).catch(() => {}))
           } catch { /* email optional */ }
         }
 

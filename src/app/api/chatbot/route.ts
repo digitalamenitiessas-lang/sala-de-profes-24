@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale/es'
+import { fechaOperativa } from '@/lib/attendance/jornada'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 // ---------------------------------------------------------------------------
 // Rate limiting (in-memory, per-user)
@@ -109,7 +109,7 @@ type BarOrderRow = {
   status: string
   note: string | null
   created_at: string
-  profiles: { first_name: string } | null
+  requested_by: string | null
 }
 
 type ChecklistItemRow = {
@@ -121,6 +121,20 @@ type ChecklistItemRow = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// El servidor (Vercel) corre en UTC: fechas y horas van en hora Argentina.
+// Antes "hoy" pasaba al día siguiente desde las 21:00 y las horas salían +3.
+const TZ_AR = 'America/Argentina/Tucuman'
+
+/** Fecha de calendario (YYYY-MM-DD) de un instante, en Argentina. */
+function fechaAR(d: Date): string {
+  return d.toLocaleString('en-CA', { timeZone: TZ_AR }).slice(0, 10)
+}
+
+/** Hora "HH:mm" de un instante, en Argentina. */
+function horaAR(iso: string): string {
+  return new Date(iso).toLocaleTimeString('es-AR', { timeZone: TZ_AR, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+}
 
 function getSemaphore(currentQty: number, minQty: number): 'green' | 'yellow' | 'red' {
   if (currentQty <= 0) return 'red'
@@ -428,12 +442,12 @@ Si alguien dice "fichar entrada", "fichar salida", "marcar ingreso", "marcar egr
 
 async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>, role: string) {
   const today = new Date()
-  const todayStr = format(today, 'yyyy-MM-dd')
-  const tomorrowStr = format(new Date(today.getTime() + 86400000), 'yyyy-MM-dd')
+  const todayStr = fechaAR(today)
+  const tomorrowStr = fechaAR(new Date(today.getTime() + 86400000))
 
   const sections: string[] = []
 
-  sections.push(`FECHA Y HORA ACTUAL: ${format(today, "EEEE d 'de' MMMM yyyy, HH:mm", { locale: es })}`)
+  sections.push(`FECHA Y HORA ACTUAL: ${today.toLocaleString('es-AR', { timeZone: TZ_AR, dateStyle: 'full', timeStyle: 'short', hourCycle: 'h23' })}`)
 
   // Define what data each role can access — socio sees everything
   const isSocio = role === 'socio'
@@ -451,11 +465,13 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
 
   try {
     // 1. Asistencia de hoy (solo encargados ven detalle completo)
+    // Por día operativo (corte 06:00), como el fichaje: a la 01:00 sigue
+    // mostrando a quien entró a la noche y todavía no marcó la salida.
     if (canSeeAttendance) {
       const { data: attendance } = await supabase
         .from('attendance_logs')
         .select('clock_in_at, clock_out_at, profiles!attendance_logs_user_id_fkey(first_name, last_name, role)')
-        .eq('operative_date', todayStr)
+        .eq('operative_date', fechaOperativa(today))
 
       const attendanceRows = (attendance ?? []) as unknown as AttendanceRow[]
 
@@ -463,8 +479,8 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
         const lines = attendanceRows.map((a) => {
           const name = a.profiles ? `${a.profiles.first_name} ${a.profiles.last_name}` : 'Desconocido'
           const r = a.profiles?.role ?? '?'
-          const checkIn = a.clock_in_at ? format(new Date(a.clock_in_at), 'HH:mm') : '?'
-          const checkOut = a.clock_out_at ? format(new Date(a.clock_out_at), 'HH:mm') : 'aún en turno'
+          const checkIn = a.clock_in_at ? horaAR(a.clock_in_at) : '?'
+          const checkOut = a.clock_out_at ? horaAR(a.clock_out_at) : 'aún en turno'
           return `- ${name} (${r}): ingreso ${checkIn}, egreso ${checkOut}`
         })
         sections.push(`ASISTENCIA HOY:\n${lines.join('\n')}`)
@@ -476,7 +492,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       const sinEgreso = attendanceRows.filter((a) => a.clock_in_at && !a.clock_out_at)
       if (sinEgreso.length > 0) {
         const lines = sinEgreso.map((a) =>
-          `- ${a.profiles ? `${a.profiles.first_name} ${a.profiles.last_name}` : '?'} (ingreso: ${a.clock_in_at ? format(new Date(a.clock_in_at), 'HH:mm') : '?'})`
+          `- ${a.profiles ? `${a.profiles.first_name} ${a.profiles.last_name}` : '?'} (ingreso: ${a.clock_in_at ? horaAR(a.clock_in_at) : '?'})`
         )
         sections.push(`EGRESOS SIN MARCAR:\n${lines.join('\n')}`)
       }
@@ -542,7 +558,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
           const key = `${p.first_name} ${p.last_name}`
           if (seenEmployees.has(key)) continue
           seenEmployees.add(key)
-          const time = format(new Date(evt.timestamp as string), 'HH:mm')
+          const time = horaAR(evt.timestamp as string)
           const flags = Array.isArray(evt.anomaly_flags) ? evt.anomaly_flags : []
           const flagStr = flags.length > 0 ? ` ⚠️ (${flags.length} alerta${flags.length > 1 ? 's' : ''})` : ''
           if (evt.event_type === 'clock_in') {
@@ -670,7 +686,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
     if (canSeeBarOrders) {
       const { data: barOrders } = await supabase
         .from('bar_orders')
-        .select('product_name, category, quantity, urgency, status, note, created_at, profiles:created_by(first_name)')
+        .select('product_name, category, quantity, urgency, status, note, created_at, requested_by')
         .in('status', ['pending', 'ordered'])
         .order('created_at', { ascending: false })
         .limit(20)
@@ -678,9 +694,17 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       const orderRows = (barOrders ?? []) as unknown as BarOrderRow[]
 
       if (orderRows.length > 0) {
+        // bar_orders.requested_by no tiene FK a profiles: los nombres van aparte
+        const requesterIds = [...new Set(orderRows.map((o) => o.requested_by).filter((id): id is string => Boolean(id)))]
+        const { data: requesters } = requesterIds.length > 0
+          ? await supabase.from('profiles').select('id, first_name').in('id', requesterIds)
+          : { data: [] }
+        const requesterName = new Map((requesters ?? []).map((p) => [p.id as string, p.first_name as string]))
+
         const lines = orderRows.map((o) => {
-          const urgTag = o.urgency === 'urgente' ? '🔴 URGENTE' : o.urgency === 'alta' ? '🟡 ALTA' : ''
-          const who = o.profiles?.first_name ?? '?'
+          // bar_orders.urgency: low / normal / high / critical
+          const urgTag = o.urgency === 'critical' ? '🔴 URGENTE' : o.urgency === 'high' ? '🟡 ALTA' : ''
+          const who = (o.requested_by && requesterName.get(o.requested_by)) || '?'
           return `- ${o.product_name} × ${o.quantity} (${o.status}) ${urgTag} — pedido por ${who}${o.note ? ` | nota: ${o.note}` : ''}`
         })
         sections.push(`PEDIDOS DE BARRA PENDIENTES:\n${lines.join('\n')}`)
@@ -692,7 +716,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
       const { data: activeShift } = await supabase
         .from('kitchen_shifts')
         .select('id, shift_type, status')
-        .eq('shift_date', todayStr)
+        .eq('date', todayStr)
         .in('status', ['pending', 'in_progress'])
         .limit(1)
         .maybeSingle()
@@ -997,7 +1021,7 @@ function buildKeywordResponse(question: string, context: string): string {
   }
 
   if (q.includes('hora') || q.includes('horas') && (q.includes('trabajo') || q.includes('trabaj') || q.includes('semana') || q.includes('mes'))) {
-    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /admin/asistencia donde podés filtrar por empleado y período.'
+    return 'Para consultar horas trabajadas de un empleado, revisá el panel de Asistencia en /equipo/asistencia donde podés filtrar por empleado y período.'
   }
 
   if (q.includes('stock') || q.includes('rojo') || q.includes('critico') || q.includes('falt')) {
@@ -1260,11 +1284,10 @@ ${context}`
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${openRouterKey}`,
-            'HTTP-Referer': 'https://laviejaescuela.com',
-            'X-Title': 'La Vieja Escuela - Sala de Profes',
+            ...OPENROUTER_APP_HEADERS,
           },
           body: JSON.stringify({
-            model: 'anthropic/claude-sonnet-4',
+            model: OPENROUTER_MODEL,
             max_tokens: 1024,
             temperature: 0.3,
             messages: [
@@ -1308,7 +1331,9 @@ ${context}`
 
         if (response.ok) {
           const data = await response.json()
-          const responseText = data.content?.[0]?.text ?? 'No pude generar una respuesta.'
+          // Con pensamiento, content[0] puede ser un bloque "thinking": buscar el de texto
+          const textBlock = (data.content as { type: string; text?: string }[] | undefined)?.find((b) => b.type === 'text')
+          const responseText = textBlock?.text ?? 'No pude generar una respuesta.'
           return processAIResponse(responseText, userRole)
         }
 

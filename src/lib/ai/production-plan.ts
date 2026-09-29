@@ -5,6 +5,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js'
 import { calcularPlanProduccion } from '@/lib/produccion/plan'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 const DOW_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 
@@ -128,9 +129,10 @@ Formato: texto plano con guiones. Sin markdown ni emojis. Máximo 150 palabras. 
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        ...OPENROUTER_APP_HEADERS,
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0.3,
         max_tokens: 400,
         messages: [
@@ -144,7 +146,7 @@ Formato: texto plano con guiones. Sin markdown ni emojis. Máximo 150 palabras. 
     const json = await res.json()
     const text = json.choices?.[0]?.message?.content?.trim()
     if (!text) throw new Error('Empty response')
-    return { analysis: text, model: json.model ?? 'anthropic/claude-sonnet-4' }
+    return { analysis: text, model: json.model ?? OPENROUTER_MODEL }
   } catch {
     return { analysis: fallback(), model: null }
   }

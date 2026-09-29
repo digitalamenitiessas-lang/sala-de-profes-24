@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { createAdminClient } from '@/lib/supabase/admin'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -327,9 +328,10 @@ export async function generateOrderMessage(order: PurchaseOrder): Promise<string
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        ...OPENROUTER_APP_HEADERS,
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0.3,
         max_tokens: 200,
         messages: [

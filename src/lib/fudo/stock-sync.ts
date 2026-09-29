@@ -23,6 +23,7 @@ import {
   resolveSourceIncidents,
   type FudoEntityType,
 } from '@/lib/fudo/sync-events'
+import { after } from 'next/server'
 import { notifyEvent } from '@/lib/push/notify-event'
 import {
   mapFudoIngredientCategory,
@@ -94,6 +95,11 @@ const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'en
   waste: 'merma',
   reception: 'entrada',
 }
+
+// La puesta a cero (/stock/conteo?modo=cero) son cientos de conteos seguidos:
+// no se avisa 'Se modifica stock' uno por uno. Se reconoce por la nota que
+// manda esa pantalla (DEFAULT_CERO_NOTE en stock/conteo/page.tsx).
+const NOTA_PUESTA_A_CERO = /^puesta a cero\b/i
 
 function stockWriteNeedsNote(currentQty: number, newQty: number, unit?: string | null) {
   const abs = Math.abs(newQty - currentQty)
@@ -1128,6 +1134,10 @@ export async function syncToFudo(
     return { success: false, fudoSynced: false, error: dbError.message }
   }
 
+  // Aviso 'Se modifica stock': conteos y ajustes, salvo la puesta a cero
+  const avisarAjuste = (writeReason === 'physical_count' || writeReason === 'manual_adjustment')
+    && !(note && NOTA_PUESTA_A_CERO.test(note))
+
   // 4. Log the change (conteos) + kardex (movimiento valorizado)
   await admin.from('stock_logs').insert({
     stock_item_id: stockItemId,
@@ -1191,12 +1201,12 @@ export async function syncToFudo(
       metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: finalQty, synced: true, reason: writeReason, note, movement_id: movementId },
     })
 
-    if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
-      notifyEvent(admin, 'stock_adjusted', {
+    if (avisarAjuste) {
+      after(() => notifyEvent(admin, 'stock_adjusted', {
         title: '📦 Stock modificado',
         body: `${item.name}: ${item.current_qty} → ${finalQty} ${item.unit}${note ? ` — ${note}` : ''}`,
         url: '/stock',
-      }).catch(() => {})
+      }).catch(() => {}))
     }
 
     return { success: true, fudoSynced: true, movementId }
@@ -1216,12 +1226,12 @@ export async function syncToFudo(
     })
   }
 
-  if (writeReason === 'physical_count' || writeReason === 'manual_adjustment') {
-    notifyEvent(admin, 'stock_adjusted', {
+  if (avisarAjuste) {
+    after(() => notifyEvent(admin, 'stock_adjusted', {
       title: '📦 Stock modificado',
       body: `${item.name}: ${item.current_qty} → ${finalQty} ${item.unit}${note ? ` — ${note}` : ''}`,
       url: '/stock',
-    }).catch(() => {})
+    }).catch(() => {}))
   }
 
   return { success: true, fudoSynced: false, movementId }

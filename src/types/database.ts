@@ -4166,7 +4166,7 @@ export type StockAvailabilityResult = {
 
 export type StockDurationResult = {
   success: boolean
-  stock_item_id: number
+  stock_item_id: string
   name: string
   current_qty: number
   unit: string

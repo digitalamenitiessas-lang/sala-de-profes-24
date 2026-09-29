@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { format } from 'date-fns'
-import { es } from 'date-fns/locale/es'
 import { countBySemaphore } from '@/lib/contracts/stock'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // Executive Summary API — generates a structured operational summary
@@ -44,7 +43,7 @@ export async function GET() {
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 800,
-            system: `Sos el sistema de reportes de La Vieja Escuela, un restaurante/café en Salta, Argentina.
+            system: `Sos el sistema de reportes de La Vieja Escuela, un restaurante/café en San Miguel de Tucumán, Argentina (sucursal 24 y Maipú).
 Generá un resumen ejecutivo BREVE del estado operativo del día.
 REGLAS:
 - Máximo 6 bullets/puntos
@@ -63,7 +62,8 @@ REGLAS:
 
         if (response.ok) {
           const data = await response.json()
-          const text = data.content?.[0]?.text
+          // Con razonamiento el primer bloque puede ser "thinking": buscar el de texto
+          const text = data.content?.find((b: { type: string; text?: string }) => b.type === 'text')?.text
           if (text) {
             return NextResponse.json({ summary: text, source: 'ai' })
           }
@@ -88,12 +88,14 @@ REGLAS:
 // ---------------------------------------------------------------------------
 
 async function gatherExecutiveContext(supabase: Awaited<ReturnType<typeof createClient>>) {
+  // Día operativo de Argentina (corte 06:00), igual que el fichaje: con la hora
+  // del servidor (UTC) desde las 21:00 se consultaba el día siguiente.
   const today = new Date()
-  const todayStr = format(today, 'yyyy-MM-dd')
-  const yesterdayStr = format(new Date(today.getTime() - 86400000), 'yyyy-MM-dd')
+  const todayStr = fechaOperativa(today)
+  const yesterdayStr = fechaOperativa(new Date(today.getTime() - 86400000))
   const sections: string[] = []
 
-  sections.push(`FECHA: ${format(today, "EEEE d 'de' MMMM yyyy", { locale: es })}`)
+  sections.push(`FECHA: ${today.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Tucuman', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`)
 
   // Attendance today
   const { data: todayAttendance } = await supabase

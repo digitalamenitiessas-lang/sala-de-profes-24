@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
@@ -116,14 +116,14 @@ export async function POST(
     // Email only to the assigned person (not all socios)
     const authorNameFull = `${profile.first_name} ${profile.last_name}`.trim()
     if (assigned_to) {
-      notifyExpedienteToResponsible({
+      after(() => notifyExpedienteToResponsible({
         responsibleId: assigned_to,
         code: exp?.code ?? id,
         title: exp?.title ?? '',
         action: 'Tarea asignada',
         authorName: authorNameFull,
         detail: `"${title.trim()}"`,
-      }).catch(() => {})
+      }).catch(() => {}))
     }
 
     // Audit trail (non-blocking)
@@ -218,27 +218,27 @@ export async function PATCH(
       // Email to new assignee
       if (assigned_to) {
         const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
-        notifyExpedienteToResponsible({
+        after(() => notifyExpedienteToResponsible({
           responsibleId: assigned_to,
           code: exp?.code ?? id,
           title: exp?.title ?? '',
           action: 'Tarea reasignada',
           authorName: reassignerName,
           detail: `"${task.title}" te fue asignada`,
-        }).catch(() => {})
+        }).catch(() => {}))
       }
 
       // Notify previous assignee that they were unassigned
       if (task.assigned_to && task.assigned_to !== assigned_to) {
         const { data: exp } = await admin.from('expedientes').select('code, title').eq('id', id).single()
-        notifyExpedienteToResponsible({
+        after(() => notifyExpedienteToResponsible({
           responsibleId: task.assigned_to,
           code: exp?.code ?? id,
           title: exp?.title ?? '',
           action: 'Tarea reasignada',
           authorName: reassignerName,
           detail: `"${task.title}" fue reasignada a ${newAssigneeName}`,
-        }).catch(() => {})
+        }).catch(() => {}))
       }
 
       // Audit trail (non-blocking)
@@ -316,14 +316,14 @@ export async function PATCH(
       }
 
       // Email only to the expediente responsible
-      notifyExpedienteToResponsible({
+      after(() => notifyExpedienteToResponsible({
         responsibleId: exp.responsible_id,
         code: exp.code,
         title: task.title,
         action: 'Tarea completada',
         authorName: updaterName,
         detail: `"${task.title}" marcada como completada`,
-      }).catch(() => {})
+      }).catch(() => {}))
     }
 
     // Audit trail (non-blocking)

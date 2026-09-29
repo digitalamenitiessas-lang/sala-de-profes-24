@@ -13,6 +13,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js'
 import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 type SnapshotItem = {
   id: string
@@ -288,9 +289,10 @@ Formato: texto plano con guiones. Sin markdown ni emojis. Máximo 180 palabras. 
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        ...OPENROUTER_APP_HEADERS,
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0.3,
         max_tokens: 500,
         messages: [
@@ -304,7 +306,7 @@ Formato: texto plano con guiones. Sin markdown ni emojis. Máximo 180 palabras. 
     const json = await res.json()
     const text = json.choices?.[0]?.message?.content?.trim()
     if (!text) throw new Error('Empty response')
-    return { analysis: text, model: json.model ?? 'anthropic/claude-sonnet-4' }
+    return { analysis: text, model: json.model ?? OPENROUTER_MODEL }
   } catch {
     return { analysis: fallback(), model: null }
   }

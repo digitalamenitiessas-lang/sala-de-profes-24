@@ -1,6 +1,6 @@
 # Pendientes — Sala de Profes 24 y Maipú
 
-Actualizado: 2026-09-28 (noche).
+Actualizado: 2026-09-29.
 
 ## Dónde estamos
 
@@ -8,100 +8,127 @@ Actualizado: 2026-09-28 (noche).
 |---|---|
 | Repo `digitalamenitiessas-lang/sala-de-profes-24` | ✅ Sin historial ni conexiones a LVE |
 | Vercel `sala-de-profes-24.vercel.app` | ✅ Deployado, con las variables de la 24 |
-| Base Supabase `hmoqksbyfemzprpsxovu` | ✅ Estructura completa de LVE, sin datos (ver `supabase/estructura/README.md`) |
-| Perfil de socio | ✅ Creado para el usuario que ya existía (figura como "Admin24 Socio": cambiar el nombre en Configuración) |
+| Base Supabase `hmoqksbyfemzprpsxovu` | ✅ Estructura de LVE sin datos (ver `supabase/estructura/README.md`) |
+| Perfil de socio | ✅ Creado ("Admin24 Socio": cambiar el nombre en Configuración) |
+| Relojes pg_cron | ✅ `fudo-pulso`, `fudo-sync-reintento`, `protocolos-avisos` y `auto-clockout` (cada hora), todos respondiendo 200 |
 | Fudo | ⏳ Faltan las credenciales de la cuenta de la 24 |
-| Relojes pg_cron | ⏳ Se crean cuando esté Fudo (ver abajo) |
-| Resend (mails) e IA | ⏳ Faltan las claves |
+| Resend (mails) | ⏳ La clave está, pero la cuenta no tiene dominio verificado (ver §3) |
+| IA (OpenRouter) | ⏳ Falta la clave (opcional) |
 
-## 1. Lo que tenés que hacer en el panel de Supabase (proyecto de la 24)
+## 1. Lo que bloquea el uso diario (en orden)
 
-1. **Authentication → Sign In / Providers → apagar "Allow new users to sign up".** La app crea
-   usuarios desde Equipo, no necesita registro público. Con el registro abierto cualquiera puede
-   crearse una cuenta con la clave pública.
+1. **Usuario de Fudo exclusivo de la 24 (dueño).** Rol administrador, que pertenezca **solo** a la
+   cuenta de la 24, sin segundo factor y con una contraseña que no se cambie. El código no le dice
+   a Fudo de qué local es: escribe en la cuenta del usuario. Con un usuario de LVE, o con acceso a
+   los dos locales, los conteos y mermas de la 24 terminarían en el Fudo de Santa Fe.
+2. **Vercel:** cargar `FUDO_LOGIN` + `FUDO_PASSWORD` **solo en Production** (en Preview no, así las
+   ramas de prueba no escriben en el Fudo real) y hacer redeploy.
+3. **Verificar la cuenta:** `/admin/fudo/salud` → *Probar*, y en `/admin/fudo` revisar que los
+   salones, los medios de pago y los productos sean los de la 24. Si aparece algo de Santa Fe:
+   borrar las variables, redeployar y no contar ni cargar mermas.
+4. **Carga inicial desde Fudo, en este orden:** `/admin/fudo` (sincroniza el menú al entrar) →
+   `/proveedores` → *Sync Fudo* → `/control` → *Datos por completar* → *Crear todos en LVE* →
+   `/stock` → *Sincronizar* → abrir `/proveedores/vincular`. No hay forma de crear insumos a mano:
+   salen de Fudo.
+5. **Conteo de prueba:** contar un insumo poniendo exactamente el número que muestra Fudo y
+   confirmar que se sincronizó bien. Después, la **Puesta a cero** (ya no manda un aviso por insumo).
+6. **Alta del equipo** desde *Equipo*. El nombre tiene que coincidir con el de la planilla de turnos.
+7. **Turnos de la semana** (grilla o Excel). **Sin turno cargado un empleado no puede fichar**
+   (los encargados y socios sí).
+8. **Probar el fichaje en el local** con un encargado.
+
+Los 3 incidentes críticos que dejaron los crons sin credenciales los cierra solo el pulso cuando
+Fudo conecte. Mientras haya uno abierto, `/stock` no deja contar los insumos de Fudo.
+
+## 2. En el panel de Supabase (vos)
+
+1. **Authentication → Sign In / Providers → apagar "Allow new users to sign up".**
 2. **Authentication → URL Configuration:**
    - Site URL: `https://sala-de-profes-24.vercel.app`
-   - Redirect URLs: agregar `https://sala-de-profes-24.vercel.app/auth/callback`
-   Sin esto, "Olvidé mi contraseña" manda a localhost.
-3. (Opcional) **Authentication → Emails → SMTP**: si LVE usa SMTP propio para los mails de acceso,
-   copiar la misma configuración.
+   - Redirect URLs: `https://sala-de-profes-24.vercel.app/**` (con `/**`: el link lleva parámetros)
+3. **Authentication → Emails → SMTP** con Resend (`smtp.resend.com`, puerto 465, usuario `resend`,
+   contraseña = clave de Resend, remitente del dominio verificado). **Es la única forma de recuperar
+   una contraseña**: la app no tiene cómo resetearle la clave a un empleado. Depende de §3.
 
-## 2. Relojes (pg_cron) — cuando estén las credenciales de Fudo
+## 3. Mails (Resend)
 
-No se crearon a propósito: el pulso de Fudo corre cada 10 minutos y, sin credenciales, generaría
-alertas de "Fudo caído". Cuando Fudo esté cargado en Vercel (y redeployado):
+La clave funciona, pero **la cuenta no tiene ningún dominio** y `laviejaescuelabar24.com.ar` no
+existe. Mientras tanto no sale ningún mail (la app no se rompe: el error queda en el log).
+Opciones:
 
-1. Guardar el `CRON_SECRET` de la 24 en Vault (el mismo valor que está en Vercel y `.env.local`):
-   `select vault.create_secret('<CRON_SECRET>', 'cron_secret_protocolos');`
-2. Correr `supabase/manual/fudo_reloj.sql` (crea `fudo-pulso`, `fudo-sync-reintento` y
-   `protocolos-avisos`, ya apuntando a `sala-de-profes-24.vercel.app`).
-3. Verificar: `select jobname, schedule from cron.job;` → 3 filas, y ninguna con `-lve.`.
+| Opción | Remitente | Qué hace falta |
+|---|---|---|
+| **Subdominio** (recomendada) | `info@24.laviejaescuelabar.com.ar` | Agregarlo en Resend y cargar los registros DNS en el Vercel donde está `laviejaescuelabar.com.ar` |
+| Cuenta de Resend de LVE | `info@laviejaescuelabar.com.ar` | Una API key nueva de esa cuenta |
+| Registrar `laviejaescuelabar24.com.ar` | `info@laviejaescuelabar24.com.ar` | Comprarlo en NIC.ar y verificarlo |
 
-## 3. Preguntas para el dueño
+Después: `EMAIL_FROM` en `.env.local` y `RESEND_API_KEY` + `EMAIL_FROM` en Vercel, con redeploy.
 
-| Tema | En LVE hoy | Qué hay que decidir | Recomendación |
+## 4. Preguntas para el dueño
+
+| Tema | En LVE hoy | Qué decidir | Recomendación |
 |---|---|---|---|
-| **Fudo** | — | Credenciales de la cuenta de Fudo de la 24 | Imprescindible para ventas, stock y menú |
-| **Equipo** | 35 perfiles | Lista de empleados: nombre, rol, email, teléfono | Se dan de alta desde **Equipo** |
-| **Horario de cierre por día** | 7 filas (vie/sáb a la 01:00) | ¿A qué hora cierra la 24 cada día? | Sin esto la salida automática asume medianoche |
-| **Tarifa por hora de cada rol** | 6 filas | ¿Cuánto se paga por hora a cada rol en la 24? | Sin esto la liquidación da $0 |
-| **Recetas** | 296 recetas, 887 ingredientes | ¿Son las mismas? | Si ya están en el Fudo de la 24, importarlas desde ahí. Copiarlas de LVE se puede, pero hay que volver a vincular los insumos |
-| **Insumos** | 500 | ¿Es el mismo catálogo? | Dejar que se creen solos desde el Fudo de la 24 (cron nocturno). Copiarlos de LVE genera duplicados salvo que se les cargue el ID de Fudo de la 24 |
-| **Proveedores** | 98 | ¿Son los mismos? | Si son los mismos, se copian, pero antes de sincronizar con Fudo hay que vincularlos con los IDs de la 24, o se duplican |
-| **Menú y categorías** | 588 / 36 | — | No se copian: vienen del Fudo de la 24 |
-| **Protocolos** | 1: "Limpieza del baño" (11:00, 14:30, 18:00, 21:30; 2 fotos) | ¿El mismo protocolo y horarios? | La app no tiene pantalla para crear protocolos: se cargan por SQL |
-| **Vajilla** | 33 ítems | ¿La misma lista? | Copiar solo los nombres, con cantidad 0 |
-| **Checklists de cocina y mise en place** | 73 plantillas / 71 ítems | ¿Los usan? | Hoy el módulo casi no se usa: cargar solo si lo piden |
-| **Plantillas de producción** | 2 | — | Dependen de recetas e insumos: después de decidir eso |
-| **Código de expedientes** | `LVE-2026-0001` | ¿Mismo prefijo o uno propio (ej. `24M-`)? | Si cambia, hay que tocar la función y una regex del front |
-| **Mails (Resend) e IA** | — | ¿Misma cuenta y dominio que LVE o propias? | Las de IA se pueden compartir |
+| **Fudo** | — | Usuario exclusivo de la 24 (ver §1) | Imprescindible |
+| **Equipo** | 35 perfiles | Nombre, rol, email y teléfono de cada uno | Alta desde Equipo |
+| **Nombre de la app** | "La Vieja Escuela" | Nombre e ícono propios de la 24 (ej. "Profes 24") | **Antes** de que la instalen: si no, quien trabaje en las dos sucursales tiene dos apps iguales |
+| **Dominio propio** | — | ¿`.vercel.app` o dominio propio? | Decidir antes de repartir la app: si cambia después, todos reinstalan y reactivan avisos |
+| **Horario de cierre por día** | 7 filas | Hora de cierre de cada día | Lo cargo por SQL (no hay pantalla) |
+| **Tarifa por hora de cada rol** | 6 filas | Monto por rol | Lo cargo por SQL. Sin esto la liquidación da $0 |
+| **Recetas** | 296 | ¿Son las mismas? | Exportar `productos.xls` del Fudo de la 24 y subirlo en `/admin/fudo/importar` |
+| **Insumos / proveedores** | 500 / 98 | ¿Los mismos? | Que salgan del Fudo de la 24. Copiarlos de LVE duplica todo en la primera sincronización |
+| **Protocolos** | "Limpieza del baño" (11:00, 14:30, 18:00, 21:30) | ¿Mismo protocolo y horarios? | Lo cargo por SQL (no hay pantalla) |
+| **Vajilla** | 33 ítems | ¿Misma lista? | Se carga desde `/vajilla` |
+| **Código de expedientes** | `LVE-2026-0001` | ¿Mismo prefijo? | Si cambia, toco la función y el front |
+| **¿Algún socio ficha?** | Sí, uno en LVE | ¿Quién? | Lo agrego en `SOCIOS_QUE_FICHAN` |
+| **Plan de Supabase** | — | Free o Pro | En Free no hay respaldos, y van a estar los fichajes con los que se liquidan sueldos |
+| **Plan de Vercel** | — | Hobby o Pro | Hobby es para uso no comercial |
+| **IA** | — | ¿Clave de OpenRouter propia? | Con límite de crédito. Sin clave la app funciona con respuestas armadas por reglas |
 
-Si deciden copiar algo de LVE, hace falta `LVE_DB_URL` en `.env.local` (solo lectura). Cuando no
-se copie nada más, **borrar esa línea**.
+## 5. Código
 
-## 4. Errores de código encontrados (están también en LVE)
+**Arreglado en la 24** (también está roto en LVE):
 
-**Arreglados en la 24** (commit local, falta el push):
+- Salida del fichaje (`clock_out_type` 'normal' → 'manual'). En LVE no hay salidas manuales desde el 05/04.
+- Pantalla de Stock, compras sugeridas, briefing, prioridades y chatbot (cruce `stock_items → suppliers` ambiguo).
+- Listado y detalle de producción (cruce `production_orders → profiles` ambiguo).
+- Alta de un Bachero (daba "Rol inválido"). Un encargado ya no puede crear socios.
+- Rol socio: en la base, solo un socio puede darlo, quitarlo o desactivar a un socio.
+- Avisos: la Puesta a cero ya no manda uno por insumo, y "falta el conteo" no avisa si no hay elaborados.
+- Mails y avisos push que Vercel podía cortar: ahora van con `after()` (17 llamadas).
+- Errores de Resend: ahora quedan registrados en el log.
+- `/control`: la tarjeta de fichajes ya no da error.
+- `/stock/rendimiento`: calcula la duración sin la función que faltaba; para lo que se vende por
+  Fudo usa la caída de stock entre fotos diarias.
+- `/admin/asistencia` (usaba 5 tablas inexistentes) redirige a `/equipo/asistencia`.
+- Chatbot: urgencias de pedidos de barra, columnas inexistentes y "hoy" en hora de Argentina.
+- Resumen ejecutivo, analítica del salón y conciliación de stock: "hoy" en hora de Argentina (antes
+  cambiaba de día a las 21:00).
+- Cierre automático de fichajes cada hora (antes una vez por día, a las 16:00).
+- IA: modelo centralizado en `src/lib/ai/model.ts` (variable `OPENROUTER_MODEL`). Sigue en
+  `anthropic/claude-sonnet-4`, igual que LVE. **Para pasar a Sonnet 5 o posterior hay que sacar
+  `temperature`** (esos modelos lo rechazan con error 400) y revisar `max_tokens` (razonan por
+  defecto). Probarlo con una clave real antes.
 
-1. **La salida del fichaje fallaba siempre.** La app mandaba `clock_out_type: 'normal'` y la base
-   solo acepta `manual`, `auto` o `edited`. En LVE no hay **ninguna salida manual desde el
-   05/04**: los 26 fichajes posteriores los cerró el reloj automático.
-   → `src/app/api/attendance/clock/route.ts`
-2. **Pantalla de Stock, compras sugeridas, briefing, prioridades y chatbot sin datos o con
-   error** desde que existe `stock_item_suppliers` (27/09): el cruce `stock_items → suppliers`
-   quedó ambiguo (`PGRST201`). → pista `suppliers!stock_items_supplier_id_fkey` en 6 archivos.
-3. **Producción: listado y detalle de órdenes fallan** (dos relaciones posibles con `profiles`).
-   → pista `profiles!production_orders_chef_id_fkey` en 2 archivos.
+**Sin arreglar:**
 
-Los tres se comprobaron contra la API real de la 24: fallaban antes y responden 200 después.
+- Chatbot: todavía consulta `clock_events` y `attendance_anomalies` (no existen), así que siempre
+  dice "sin anomalías" y "0 personas ficharon". Habría que pasarlo a `attendance_logs`.
+- El conteo diario de elaborados manda un aviso "Stock modificado" por cada elaborado, además del resumen.
+- En Equipo, el diálogo de alta le sigue mostrando la opción "Socio" a un encargado (el servidor lo rechaza igual).
+- ~113 errores de tipos viejos (el build los ignora con `ignoreBuildErrors`).
 
-**Sin arreglar todavía:**
+## 6. Para avisarle a tu compañero (LVE, Santa Fe)
 
-- `/control` (tarjeta de fichajes) y `/stock/rendimiento` llaman a las funciones
-  `get_suspicious_attendance` y `stock_duration`, que no existen en ninguna de las dos bases.
-- `/admin/asistencia` usa 5 tablas que no existen (anomalías, correcciones, dispositivos, WiFi).
-- "Guardar configuración" de asistencia falla porque `attendance_config` no tiene filas (en LVE
-  pasa lo mismo con 3 de las 4 claves).
-- Chatbot: crea pedidos de barra con urgencia `alta`/`urgente` (la base espera `high`/`critical`) y
-  consulta dos columnas que no existen (`bar_orders.created_by`, `kitchen_shifts.shift_date`).
-- `deduct_stock_on_sale` y `produce_recipe` llaman a `register_stock_movement`, que no existe
-  (código muerto).
-
-## 5. Para avisarle a tu compañero (LVE, Santa Fe)
-
-Nada de esto se tocó en LVE. En la 24 ya está corregido; como referencia sirve
-`supabase/estructura/03_ajustes_sucursal_24.sql`.
+En LVE no se tocó nada. Como referencia sirve `supabase/estructura/03_ajustes_sucursal_24.sql`.
 
 **Seguridad:**
 - **Cualquiera puede darse el rol de socio** si el registro público está activado en LVE:
   `handle_new_user()` toma el rol de lo que manda el cliente al registrarse.
-- **Cualquier empleado puede cambiarse a socio** con un update de su propio perfil: la política
-  `profiles_update_own` no limita la columna `role`.
-- **Tablas `_backup_*_20260728`** (535 + 529 + 137 filas reales) sin RLS y con permiso total para
-  `anon`: se pueden leer y modificar solo con la clave pública.
-- **Vistas `v_today_attendance` y `v_active_alerts`** legibles sin sesión: nombres y fichajes del día.
-- **`bar_stock_items`** abierta a `anon` (leer, crear y modificar).
+- **Cualquier empleado puede cambiarse a socio** con un update de su propio perfil.
+- **Tablas `_backup_*_20260728`** (535 + 529 + 137 filas reales) sin RLS y abiertas a `anon`.
+- **Vistas `v_today_attendance` y `v_active_alerts`** legibles sin sesión (nombres y fichajes del día).
+- **`bar_stock_items`** abierta a `anon`.
 - **Rotar la clave `service_role`**: estuvo escrita en `scripts/create-users.mjs` y
   `scripts/update-profiles.mjs` del repo de LVE.
 
-**Bugs:** los tres de la sección 4 (mismos archivos, mismo arreglo).
+**Bugs:** los de la sección 5 (mismos archivos). El más urgente es la salida del fichaje.

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
@@ -450,11 +450,12 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    notifyEvent(admin, 'production_completed', {
+    // after(): el push sale después de responder sin que Vercel lo corte
+    after(() => notifyEvent(admin, 'production_completed', {
       title: '👨‍🍳 Producción completada',
       body: `${authorName}: "${body.name}" — ${outputSummary || 'ver detalle'}${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
-    }).catch(() => {})
+    }).catch(() => {}))
 
     return NextResponse.json({
       success: true,

@@ -12,6 +12,15 @@ import { fudoHttp } from '@/lib/fudoClient'
 
 export const dynamic = 'force-dynamic'
 
+// El servidor corre en UTC: horas, días y fechas se leen en hora Argentina
+// (UTC-3, sin horario de verano), igual que en src/lib/ventas/aggregate.ts.
+const AR_OFFSET_MS = 3 * 60 * 60 * 1000
+
+/** El instante corrido a hora Argentina: leerlo con getUTC* / toISOString. */
+function enHoraAR(d: Date): Date {
+  return new Date(d.getTime() - AR_OFFSET_MS)
+}
+
 export async function GET(request: NextRequest) {
   try {
     const userSupabase = await createClient()
@@ -20,8 +29,8 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient()
     const url = new URL(request.url)
-    const from = url.searchParams.get('from') ?? format(subDays(new Date(), 7), 'yyyy-MM-dd')
-    const to = url.searchParams.get('to') ?? format(new Date(), 'yyyy-MM-dd')
+    const from = url.searchParams.get('from') ?? enHoraAR(subDays(new Date(), 7)).toISOString().slice(0, 10)
+    const to = url.searchParams.get('to') ?? enHoraAR(new Date()).toISOString().slice(0, 10)
 
     // 1. Get all served items in the period
     const { data: servedItems } = await admin
@@ -105,6 +114,7 @@ export async function GET(request: NextRequest) {
 
       if (dispatchMinutes < 0 || dispatchMinutes > 180) continue // Skip outliers
 
+      const servedAR = enHoraAR(servedAt)
       const prof = served.profiles as { first_name: string; last_name: string } | null
 
       records.push({
@@ -112,9 +122,9 @@ export async function GET(request: NextRequest) {
         dispatchMinutes,
         servedAt,
         runnerName: prof ? `${prof.first_name} ${prof.last_name}` : '?',
-        dayOfWeek: servedAt.getDay(),
-        hour: servedAt.getHours(),
-        date: format(servedAt, 'yyyy-MM-dd'),
+        dayOfWeek: servedAR.getUTCDay(),
+        hour: servedAR.getUTCHours(),
+        date: servedAR.toISOString().slice(0, 10),
       })
     }
 

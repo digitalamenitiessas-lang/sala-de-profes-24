@@ -28,7 +28,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
   },
   stock_adjusted: {
     label: 'Se modifica stock',
-    description: 'Conteo físico (puesta a cero) o ajuste manual de un insumo.',
+    description: 'Conteo físico o ajuste manual de un insumo (la puesta a cero no avisa).',
     enabled: true,
     target_roles: ['socio'],
     target_user_ids: [],

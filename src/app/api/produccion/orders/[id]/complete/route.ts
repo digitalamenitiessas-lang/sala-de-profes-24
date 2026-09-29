@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
@@ -339,11 +339,12 @@ export async function POST(
       },
     })
 
-    notifyEvent(admin, 'production_completed', {
+    // after(): el push sale después de responder sin que Vercel lo corte
+    after(() => notifyEvent(admin, 'production_completed', {
       title: '👨‍🍳 Producción validada',
       body: `${validatorName ?? 'Alguien'}: "${order.name}"${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
-    }).catch(() => {})
+    }).catch(() => {}))
 
     return NextResponse.json({
       success: true,

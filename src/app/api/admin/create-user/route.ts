@@ -8,7 +8,7 @@ import type { AppRole } from '@/types/database'
 // POST /api/admin/create-user
 // ---------------------------------------------------------------------------
 // Crea un usuario nuevo en Supabase Auth + perfil en profiles.
-// Solo accesible por encargados.
+// Solo accesible por socios y encargados (solo un socio puede crear socios).
 //
 // Body: {
 //   email: string,
@@ -20,7 +20,7 @@ import type { AppRole } from '@/types/database'
 // }
 // ---------------------------------------------------------------------------
 
-const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner']
+const VALID_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export async function POST(request: NextRequest) {
   try {
@@ -74,6 +74,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: `Rol inválido. Debe ser uno de: ${VALID_ROLES.join(', ')}` },
         { status: 400 },
+      )
+    }
+
+    // Un encargado no puede darse de alta socios (escalada de privilegios)
+    if (role === 'socio' && callerProfile.role !== 'socio') {
+      return NextResponse.json(
+        { error: 'Solo un socio puede crear otro socio' },
+        { status: 403 },
       )
     }
 

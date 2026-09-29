@@ -17,6 +17,22 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
 
 // ---------------------------------------------------------------------------
+// Fecha de hoy en Argentina
+// ---------------------------------------------------------------------------
+// El servidor (Vercel) corre en UTC: con new Date().toISOString() "hoy" pasaba
+// a ser el día siguiente desde las 21:00. Argentina no tiene horario de
+// verano (siempre -03:00), así que el día arranca en `${fecha}T00:00:00-03:00`.
+
+/** Fecha de calendario de hoy (YYYY-MM-DD) en Argentina. */
+function fechaHoyAR(): string {
+  return new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Tucuman' }).slice(0, 10)
+}
+
+// bar_orders acepta low/normal/high/critical (CHECK bar_orders_urgency_check);
+// el chat usa normal/alta/urgente. Mismo mapeo que /api/kitchen/bar.
+const BAR_URGENCY: Record<string, string> = { normal: 'normal', alta: 'high', urgente: 'critical' }
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -283,8 +299,7 @@ export async function executeQuery(
     }
 
     if (queryData.type === 'PRODUCCION_HOY') {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
+      const today = new Date(`${fechaHoyAR()}T00:00:00-03:00`)
 
       const { data: orders } = await admin
         .from('production_orders')
@@ -319,7 +334,7 @@ export async function executeQuery(
     if (queryData.type === 'VENTAS_HOY') {
       try {
         const { fudo } = await import('@/lib/fudoClient')
-        const today = new Date().toISOString().split('T')[0]
+        const today = fechaHoyAR()
         const sales = await fudo.getSales({ from: today })
 
         if (!sales.length) return '📊 Sin ventas registradas hoy en Fudo.'
@@ -433,7 +448,7 @@ export async function executeQuery(
 
     // ── BRIEFING_DIARIO — resumen ejecutivo del día ──
     if (queryData.type === 'BRIEFING_DIARIO') {
-      const todayDate = new Date().toISOString().split('T')[0]
+      const todayDate = fechaHoyAR()
       const lines: string[] = ['📋 **Briefing del día**\n']
 
       // Stock alerts
@@ -1251,7 +1266,7 @@ export async function buildProposal(
 
   if (intent === 'MISE_EN_PLACE') {
     // Mise en place matches against mise_en_place_items, not stock — do a dedicated match
-    const todayStr = new Date().toISOString().split('T')[0]
+    const todayStr = fechaHoyAR()
     const { data: activeShift } = await admin
       .from('kitchen_shifts')
       .select('id, shift_type')
@@ -1375,7 +1390,7 @@ export async function executeAction(
             product_name: productName,
             category: 'general',
             quantity: item.quantity,
-            urgency: proposal.urgency ?? 'normal',
+            urgency: BAR_URGENCY[proposal.urgency ?? 'normal'] ?? 'normal',
             status: 'pending',
             bar_stock_item_id: typeof item.matchedStockId === 'number' ? item.matchedStockId : null,
             requested_by: userId,
@@ -1871,7 +1886,7 @@ export async function executeAction(
 
     // ── MISE_EN_PLACE — mark items as done in current shift ──
     if (proposal.intent === 'MISE_EN_PLACE') {
-      const todayStr = new Date().toISOString().split('T')[0]
+      const todayStr = fechaHoyAR()
 
       // Find active kitchen shift
       const { data: activeShift } = await admin

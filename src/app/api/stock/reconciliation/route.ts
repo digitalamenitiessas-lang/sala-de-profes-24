@@ -33,9 +33,10 @@ export async function GET(request: NextRequest) {
     const fromParam = request.nextUrl.searchParams.get('from')
     const toParam = request.nextUrl.searchParams.get('to')
 
-    // Default: hoy 00:00 → ahora
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
+    // Default: hoy 00:00 (hora Argentina, UTC-3) → ahora. El servidor corre en
+    // UTC: setHours(0) daba las 21:00 del día anterior.
+    const hoyAR = new Date(Date.now() - 3 * 3_600_000).toISOString().slice(0, 10)
+    const today = new Date(`${hoyAR}T00:00:00-03:00`)
     const from = fromParam ?? today.toISOString()
     const to = toParam ?? new Date().toISOString()
 

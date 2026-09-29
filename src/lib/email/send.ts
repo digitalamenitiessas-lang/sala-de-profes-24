@@ -57,12 +57,17 @@ async function getUserEmail(userId: string): Promise<string | null> {
 async function sendEmail(to: string[], subject: string, html: string) {
   if (!resend || to.length === 0) return
   try {
-    await resend.emails.send({
+    // Resend no tira excepción cuando rechaza el envío (dominio sin verificar,
+    // etc.): devuelve { error }. Lo registramos sin exponer las direcciones.
+    const { error } = await resend.emails.send({
       from: FROM_EMAIL,
       to,
       subject,
       html,
     })
+    if (error) {
+      console.error(`[email] Resend rechazó "${subject}" (${to.length} destinatario/s):`, error)
+    }
   } catch (err) {
     console.error('[email] Error sending:', err)
   }

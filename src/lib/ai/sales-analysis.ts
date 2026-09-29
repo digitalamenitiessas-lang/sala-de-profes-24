@@ -9,6 +9,7 @@ import { SupabaseClient } from '@supabase/supabase-js'
 import { format, startOfWeek } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { fetchMonthSales, type MonthSale } from '@/lib/fudo/month-sales'
+import { OPENROUTER_MODEL, OPENROUTER_APP_HEADERS } from '@/lib/ai/model'
 
 const DOW_LABELS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 
@@ -261,9 +262,10 @@ Usá español argentino, directo. Mencioná números concretos (montos y horas).
       headers: {
         'Authorization': `Bearer ${OPENROUTER_KEY}`,
         'Content-Type': 'application/json',
+        ...OPENROUTER_APP_HEADERS,
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4',
+        model: OPENROUTER_MODEL,
         temperature: 0.3,
         max_tokens: 700,
         messages: [
@@ -277,7 +279,7 @@ Usá español argentino, directo. Mencioná números concretos (montos y horas).
     const json = await res.json()
     const text = json.choices?.[0]?.message?.content?.trim()
     if (!text) throw new Error('Empty response')
-    return { analysis: text, model: json.model ?? 'anthropic/claude-sonnet-4' }
+    return { analysis: text, model: json.model ?? OPENROUTER_MODEL }
   } catch {
     return { analysis: buildFallbackAnalysis(stats), model: null }
   }

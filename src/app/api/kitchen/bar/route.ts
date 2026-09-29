@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyOrderToEncargados, notifyOrderStatusChange } from '@/lib/email/send'
@@ -157,21 +157,22 @@ export async function POST(request: NextRequest) {
           is_active: true,
         })
 
-        // Email to encargados + socios (sin el creador: no se autonotifica)
-        notifyOrderToEncargados({
+        // Email to encargados + socios (sin el creador: no se autonotifica).
+        // after(): los avisos corren después de responder sin que Vercel los corte.
+        after(() => notifyOrderToEncargados({
           type: 'barra',
           authorName,
           items: [{ name: productName, quantity }],
           urgency: urgency || 'normal',
           note,
           excludeUserId: user.id,
-        }).catch(() => {})
+        }).catch(() => {}))
 
-        notifyEvent(admin, 'purchase_created', {
+        after(() => notifyEvent(admin, 'purchase_created', {
           title: '🛒 Nuevo pedido de barra',
           body: `${authorName}: ${itemLine}`,
           url: '/pedidos',
-        }, { excludeUserId: user.id }).catch(() => {})
+        }, { excludeUserId: user.id }).catch(() => {}))
       }
 
       return NextResponse.json({ success: true })
@@ -258,13 +259,14 @@ export async function POST(request: NextRequest) {
             is_active: true,
           })
 
-          // Email to order creator
-          notifyOrderStatusChange({
-            userId: order.requested_by,
+          // Email to order creator (el id va a una const: dentro del callback se pierde el narrowing)
+          const creadorId = order.requested_by
+          after(() => notifyOrderStatusChange({
+            userId: creadorId,
             productName: order.product_name,
             quantity: order.quantity,
             newStatus: status as 'ordered' | 'received' | 'cancelled',
-          }).catch(() => {})
+          }).catch(() => {}))
         }
       }
 

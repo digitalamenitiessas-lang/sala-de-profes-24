@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { notifyExpedienteToResponsible } from '@/lib/email/send'
@@ -128,23 +128,23 @@ export async function PATCH(
         is_active: true,
       })
 
-      // Push notification to author
-      sendPushToUser(expediente.author_id, {
+      // Push notification to author (after(): que Vercel no lo corte al responder)
+      after(() => sendPushToUser(expediente.author_id, {
         title: `📋 ${expediente.title} → ${toLabel}`,
         body: `${authorName} cambió el estado del expediente ${expediente.code}`,
         url: `/expedientes/${id}`,
-      }).catch(() => {})
+      }).catch(() => {}))
     }
 
     // Email only to the responsible person
-    notifyExpedienteToResponsible({
+    after(() => notifyExpedienteToResponsible({
       responsibleId: expediente.responsible_id,
       code: expediente.code,
       title: expediente.title,
       action: `Cambio de estado: ${fromLabel} → ${toLabel}`,
       authorName,
       detail: closeReason || undefined,
-    }).catch(() => {})
+    }).catch(() => {}))
 
     // Audit trail (non-blocking)
     logAudit(admin, {

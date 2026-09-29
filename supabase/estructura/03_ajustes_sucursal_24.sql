@@ -53,21 +53,26 @@ $$;
 alter policy "profiles_insert" on public.profiles
   with check (id = auth.uid() and role = 'barista');
 
--- 8. Rol y estado (activo/inactivo) solo los cambia un encargado o socio.
+-- 8. Rol y estado (activo/inactivo) solo los cambia un encargado o socio, y el
+--    rol socio (darlo, quitarlo o desactivar a un socio) solo lo toca un socio.
 --    Antes cualquiera podía hacerse socio con un update de su propio perfil.
 --    El servidor (service_role, sin auth.uid()) sigue pudiendo todo.
 create or replace function public.profiles_proteger_rol() returns trigger
   language plpgsql security definer set search_path = ''
 as $$
+declare
+  v_rol text;
 begin
   if (new.role is distinct from old.role or new.is_active is distinct from old.is_active)
      and auth.uid() is not null
-     and not exists (
-       select 1 from public.profiles
-       where id = auth.uid() and role in ('encargado', 'socio')
-     )
   then
-    raise exception 'Solo un encargado o socio puede cambiar el rol o el estado de un perfil';
+    select role::text into v_rol from public.profiles where id = auth.uid();
+    if v_rol is null or v_rol not in ('encargado', 'socio') then
+      raise exception 'Solo un encargado o socio puede cambiar el rol o el estado de un perfil';
+    end if;
+    if v_rol <> 'socio' and (new.role = 'socio' or old.role = 'socio') then
+      raise exception 'Solo un socio puede dar o quitar el rol de socio, o desactivar a un socio';
+    end if;
   end if;
   return new;
 end;
