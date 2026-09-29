@@ -214,7 +214,7 @@ export async function POST(request: Request) {
       clock_out_lat: gps_lat,
       clock_out_lng: gps_lng,
       clock_out_accuracy: gps_accuracy ?? null,
-      clock_out_type: 'normal',
+      clock_out_type: 'manual',
       status: 'closed',
     })
     .eq('id', openRecord.id)

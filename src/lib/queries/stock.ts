@@ -6,7 +6,7 @@ const FIELDS = {
   minimal: 'id, name, unit, current_qty' as const,
   summary: 'id, name, unit, current_qty, min_qty, category' as const,
   full: 'id, name, unit, current_qty, min_qty, category, is_active, is_produced, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, cost_per_unit, cost_source, cost_updated_at, shelf_life_days, purchase_lead_time_days, notes, updated_at' as const,
-  withSupplier: 'id, name, unit, current_qty, min_qty, category, is_active, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, shelf_life_days, purchase_lead_time_days, notes, updated_at, suppliers(id, name, phone, email)' as const,
+  withSupplier: 'id, name, unit, current_qty, min_qty, category, is_active, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, shelf_life_days, purchase_lead_time_days, notes, updated_at, suppliers!stock_items_supplier_id_fkey(id, name, phone, email)' as const,
 } as const
 
 // 'full' sin las columnas de la migración 20260909 (costo confiable), para

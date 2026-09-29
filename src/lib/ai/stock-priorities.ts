@@ -111,7 +111,7 @@ export async function generateStockPriorities(): Promise<StockPriority[]> {
 
   const { data: items } = await admin
     .from('stock_items')
-    .select('id, name, category, current_qty, min_qty, supplier_id, suppliers(name)')
+    .select('id, name, category, current_qty, min_qty, supplier_id, suppliers!stock_items_supplier_id_fkey(name)')
     .eq('is_active', true)
 
   if (!items || items.length === 0) return []

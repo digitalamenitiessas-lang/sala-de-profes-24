@@ -44,7 +44,7 @@ export type StockItem = {
 // Fetcher
 // ---------------------------------------------------------------------------
 
-const BASE_SELECT = 'id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, last_counted_at, fudo_product_id, fudo_ingredient_id, fudo_skip, is_produced, cost_per_unit, suppliers(id, name, phone, contact_name)'
+const BASE_SELECT = 'id, name, category, unit, current_qty, min_qty, shelf_life_days, purchase_lead_time_days, is_active, notes, updated_at, supplier_id, last_counted_at, fudo_product_id, fudo_ingredient_id, fudo_skip, is_produced, cost_per_unit, suppliers!stock_items_supplier_id_fkey(id, name, phone, contact_name)'
 const AREA_SELECT = `${BASE_SELECT}, area, fudo_category, area_locked`
 const COSTO_SELECT = `${AREA_SELECT}, cost_source, cost_updated_at`
 

@@ -37,7 +37,7 @@ export async function gatherBriefingContext(): Promise<BriefingData> {
   const today = new Date().toISOString().slice(0, 10)
 
   const [stockRes, ordersKitchenRes, ordersBarRes, expedientesRes, teamRes, announcementsRes] = await Promise.all([
-    admin.from('stock_items').select('name, current_qty, min_qty, supplier_id, suppliers(name)').eq('is_active', true),
+    admin.from('stock_items').select('name, current_qty, min_qty, supplier_id, suppliers!stock_items_supplier_id_fkey(name)').eq('is_active', true),
     admin.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('bar_orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
     admin.from('expedientes').select('id, code, title, status, target_date, updated_at').not('status', 'in', '("cumplido","cerrado_sin_implementacion","archivado")'),

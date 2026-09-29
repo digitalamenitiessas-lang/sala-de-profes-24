@@ -586,7 +586,7 @@ async function gatherContext(supabase: Awaited<ReturnType<typeof createClient>>,
     if (canSeeStockGeneral) {
       const { data: stockItems } = await supabase
         .from('stock_items')
-        .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, suppliers(name)')
+        .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip, suppliers!stock_items_supplier_id_fkey(name)')
         .eq('is_active', true)
         .order('name', { ascending: true })
 

@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
         id, name, status, parent_order_id, template_id, chef_id,
         notes, started_at, completed_at, submitted_at, reviewed_at, created_at, updated_at,
         production_templates(name),
-        profiles(first_name, last_name, role)
+        profiles!production_orders_chef_id_fkey(first_name, last_name, role)
       `)
       .gte('created_at', since.toISOString())
       .order('created_at', { ascending: false })

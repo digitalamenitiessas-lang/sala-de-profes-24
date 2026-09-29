@@ -166,7 +166,7 @@ export async function generatePurchaseOrders(): Promise<PurchaseOrderResult> {
   // Fetch stock items that need attention (below minimum * 1.2)
   const { data: items } = await admin
     .from('stock_items')
-    .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_product_id, suppliers(id, name, phone, email, order_days, lead_time_days)')
+    .select('id, name, category, unit, current_qty, min_qty, supplier_id, fudo_product_id, suppliers!stock_items_supplier_id_fkey(id, name, phone, email, order_days, lead_time_days)')
     .eq('is_active', true)
 
   if (!items) return { orders: [], unassigned: [], generatedAt: new Date().toISOString(), sources: [] }

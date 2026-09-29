@@ -105,7 +105,7 @@ export async function GET(
         .select(`
           *,
           production_templates(name),
-          profiles(first_name, last_name, role)
+          profiles!production_orders_chef_id_fkey(first_name, last_name, role)
         `)
         .eq('id', id)
         .single(),
