@@ -1,6 +1,6 @@
 # Pendientes — Sala de Profes 24 y Maipú
 
-Actualizado: 2026-10-13 (apertura de la 24). Incluye los cambios de LVE hasta el 13/10 (ver §7).
+Actualizado: 2026-10-13 (apertura de la 24, noche). Fudo conectado: ventas, menú y 44 insumos sincronizados; protocolos PAUSADOS hasta que arranque el equipo. Incluye los cambios de LVE hasta el 13/10 (ver §7).
 
 ## Dónde estamos
 
@@ -172,3 +172,16 @@ por Telegram, etc.), conservando todas las adaptaciones de la 24.
 - **Alta de Cajero:** queda como encargado sin puesto (el upsert del perfil choca con el trigger).
   Arreglado en la 24 en `src/app/api/admin/create-user/route.ts` (`fijarPuestoCajero`).
 - `profiles.puesto` no está protegido: un empleado puede cambiarse el puesto y cobrar otra tarifa.
+
+## 8. Estado al cierre del 13/10
+
+- **Fudo conectado** con la cuenta del dueño (verificado: es el Fudo de la 24). Ventas en vivo cada 10',
+  menú (152 productos), 44 insumos creados desde Fudo con área y unidad. **Nada escrito en Fudo todavía.**
+- **Protocolos pausados** (los 4 con `activo = false`) hasta que haya equipo con turno. Se reactivan
+  desde la app (*Protocolos → configuración → activo*).
+- **Recetas y descartables:** propuesta para el dueño en `PROPUESTA-RECETAS-Y-DESCARTABLES.md`.
+- **Proveedores:** 41 de 44 insumos sin proveedor (en Fudo hay solo 2 reales: Nuevo Polo Norte y
+  Todo Envase). Cargar los proveedores en Fudo → *Sync Fudo* → asignar en `/proveedores/vincular`.
+- **Lo que escribe en Fudo** (no usar hasta la Puesta a cero): conteos, mermas, recepciones,
+  producciones, confirmar compras / pagar gastos, ajustes por el chatbot y la configuración de
+  descartables por producto.
