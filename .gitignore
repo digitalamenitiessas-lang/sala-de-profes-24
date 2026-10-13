@@ -43,3 +43,6 @@ next-env.d.ts
 
 # supabase cli (enlace local al proyecto)
 supabase/.temp
+
+# lista de empleados para copiar de LVE (datos personales)
+scripts/empleados-24.txt
