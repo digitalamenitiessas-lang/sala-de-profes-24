@@ -185,3 +185,15 @@ por Telegram, etc.), conservando todas las adaptaciones de la 24.
 - **Lo que escribe en Fudo** (no usar hasta la Puesta a cero): conteos, mermas, recepciones,
   producciones, confirmar compras / pagar gastos, ajustes por el chatbot y la configuración de
   descartables por producto.
+
+## 9. Empleados (13/10)
+
+- Copiados los **25 empleados activos de Santa Fe** con `scripts/copiar-empleados-lve.mjs`: mismo
+  email, misma contraseña (cifrada), mismo rol y mismo id que en LVE. En la 24 hay 26 perfiles
+  (los 25 + Admin24). Incluye 3 cuentas que parecen genéricas o de prueba de LVE
+  (`encargado@lve.com`, `runner@lve.com` y `lu@laviejaescuela.com`, esta última **socio**): revisar
+  si se usan y, si no, desactivarlas.
+- Quien no trabaje en la 24 se desactiva desde *Equipo* (un encargado puede de encargado para abajo;
+  a un socio solo lo desactiva otro socio). Los nuevos se dan de alta desde *Equipo → Nuevo*.
+- Si alguien cambia la contraseña en una app, en la otra no cambia (son cuentas separadas).
+- Falta: **cargar los turnos** (sin turno no se puede fichar) y reactivar los protocolos.
