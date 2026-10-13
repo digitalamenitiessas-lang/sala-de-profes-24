@@ -1,4 +1,4 @@
--- SOLO se aplicó la sección A (feriados). B (tarifas) y C (protocolos) esperan la confirmación del dueño.
+-- SOLO se aplicó la sección A (feriados). B y C quedaron reemplazadas por 06_datos_copiados_de_lve_2026-10-13.sql (copia exacta de LVE).
 -- =============================================================================
 -- Sucursal 24 y Maipú — DATOS que sembraron las migraciones nuevas de LVE
 -- =============================================================================

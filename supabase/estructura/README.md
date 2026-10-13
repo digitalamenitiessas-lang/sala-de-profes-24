@@ -48,6 +48,7 @@ políticas, triggers, índices, restricciones y permisos por rol): todo es idén
 |---|---|---|---|
 | 2026-10-13 | `c87cd48..2cb4da4` | `04_sync_lve_2026-10-13.sql` | Aplicado: 23 migraciones de LVE (cajero, ausencias, feriados, ventas_diarias, descartables, gastos de Fudo, protocolos, recetario de platos) + 7 relojes apuntando a la 24 |
 | 2026-10-13 | | `05_datos_lve_2026-10-13_PENDIENTE_DUENO.sql` | Solo se aplicó A (feriados). B (tarifas) y C (protocolos) esperan al dueño |
+| 2026-10-13 | | `06_datos_copiados_de_lve_2026-10-13.sql` | Aplicado: tarifas y protocolos copiados tal cual de la base de LVE (reemplaza B y C del 05) |
 
 Para comparar las dos bases: `comparar_catalogo.sql` (ver el encabezado). Después de una sincronización
 solo tienen que quedar las diferencias de seguridad de la lista de arriba, más `_deduct_stock_item` y

@@ -146,15 +146,17 @@ por Telegram, etc.), conservando todas las adaptaciones de la 24.
   `git diff <último sincronizado> lve/main` en una rama y comparar las bases con
   `supabase/estructura/comparar_catalogo.sql`. Último commit de LVE sincronizado: `2cb4da4`.
 
-**Falta (dueño):**
-- **Tarifas por hora de los 7 roles** (encargado, cajero, chef, cocina, barista, runner, bacha). En LVE:
-  cajero, chef y barista $4.200, cocina $4.000. Archivo listo: sección B de
-  `supabase/estructura/05_datos_lve_2026-10-13_PENDIENTE_DUENO.sql`.
-- **Protocolos nuevos** (Control de tolva 08:00/16:00/23:30, Control de descartables 08:30/16:30,
-  Conteo de elaborados 15:30): ¿mismos horarios en la 24? Sección C del mismo archivo.
-- **Horarios de turno:** los resúmenes de Telegram suponen turnos 06-16 y 16-06 (como LVE).
-- **Telegram:** si quieren los resúmenes de turno, un **bot propio de la 24** (no el de LVE) en
-  `TELEGRAM_JOB_BOT` y vincular el grupo desde la app.
+**Datos copiados de LVE** (`supabase/estructura/06_datos_copiados_de_lve_2026-10-13.sql`, aplicado):
+- Tarifas por hora iguales a Santa Fe: encargado $4.400; cajero, chef y barista $4.200; cocina $4.000;
+  runner $3.600; bachero $3.300.
+- Los 4 protocolos iguales a Santa Fe: Limpieza del baño (11:00, 14:30, 18:00, 23:30), Control de tolva
+  (08:00, 16:00, 21:45), Control de descartables (08:30, 16:30) y Conteo de elaborados (15:30, 15:45).
+  Los horarios se editan desde la app.
+
+**Falta:**
+- **Telegram (pendiente para el 14/10):** crear un **bot propio de la 24** con BotFather (no usar el de
+  LVE), cargar la clave en `TELEGRAM_JOB_BOT` en Vercel, redeploy y vincular el grupo desde la app.
+- Los resúmenes de turno suponen turnos 06-16 y 16-06 (como LVE): confirmar el horario de la 24.
 
 **Falta (cuando conecte Fudo):**
 - Mirar `GET /payment-methods` del Fudo de la 24 y, si hace falta, cargar `FUDO_MEDIOS_PAGO`. Sin eso,
