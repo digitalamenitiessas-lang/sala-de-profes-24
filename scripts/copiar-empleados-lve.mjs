@@ -20,6 +20,11 @@
 // Uso:
 //   node scripts/copiar-empleados-lve.mjs            ← solo muestra qué haría
 //   node scripts/copiar-empleados-lve.mjs --aplicar  ← crea las cuentas en la 24
+//   node scripts/copiar-empleados-lve.mjs --resincronizar           ← muestra quién tiene otra clave
+//   node scripts/copiar-empleados-lve.mjs --resincronizar --aplicar ← le copia la clave actual de LVE
+// --resincronizar no crea cuentas: a quien ya existe en la 24 y cambió la clave en LVE
+// después de la copia, le vuelve a copiar la contraseña cifrada actual de LVE.
+// Sin lista (scripts/empleados-24.txt) revisa a todos los activos de LVE.
 //
 // Necesita en .env.local: LVE_DB_URL (solo lectura), SUPABASE_DB_URL,
 // NEXT_PUBLIC_SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY (los de la 24).
@@ -37,6 +42,7 @@ const REF_LVE = 'tumbcpizdqlnuevplawr'
 const REF_24 = 'hmoqksbyfemzprpsxovu'
 const ROLES = ['socio', 'encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 const APLICAR = process.argv.includes('--aplicar')
+const RESINCRONIZAR = process.argv.includes('--resincronizar')
 
 function loadEnvLocal() {
   const envPath = join(projectRoot, '.env.local')
@@ -56,6 +62,7 @@ const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').rep
 
 function leerLista() {
   const path = join(__dirname, 'empleados-24.txt')
+  if (!existsSync(path) && RESINCRONIZAR) return null // sin lista: todos los activos de LVE
   if (!existsSync(path)) {
     console.error('❌ Falta scripts/empleados-24.txt (una persona por línea: email o "Nombre Apellido", opcional "; rol").')
     process.exit(1)
@@ -91,11 +98,37 @@ async function run() {
            p.phone, p.cuit, p.address, p.dni, p.birth_date, p.emergency_contact_name, p.emergency_contact_phone
     from public.profiles p join auth.users u on u.id = p.id
     where p.is_active and u.email is not null`)
-  const { rows: ya24 } = await db24.query('select lower(email) as email from auth.users where email is not null')
+  const { rows: ya24 } = await db24.query('select id, lower(email) as email, md5(encrypted_password) as hash_md5 from auth.users where email is not null')
   const existentes = new Set(ya24.map((r) => r.email))
+  const cuenta24 = new Map(ya24.map((r) => [r.email, r]))
+
+  if (RESINCRONIZAR) {
+    const quienes = lista ? lista.map((i) => norm(i.quien)) : null
+    const md5 = (await import('crypto')).createHash
+    const distintos = empleados.filter((e) => {
+      const c = cuenta24.get(e.email.toLowerCase())
+      if (!c) return false
+      if (quienes && !quienes.includes(e.email.toLowerCase()) && !quienes.includes(norm(`${e.first_name} ${e.last_name}`))) return false
+      return c.hash_md5 !== md5('md5').update(e.encrypted_password ?? '').digest('hex')
+    })
+    console.log(`\n${APLICAR ? '✍️  RESINCRONIZANDO' : '👀 SOLO MUESTRA (agregá --aplicar para copiar la clave)'} — ${distintos.length} con contraseña distinta a la de LVE\n`)
+    for (const e of distintos) console.log(`  🔑 ${e.first_name} ${e.last_name} <${e.email}>`)
+    if (APLICAR && distintos.length) {
+      const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+      for (const e of distintos) {
+        const id = cuenta24.get(e.email.toLowerCase()).id
+        const { error } = await admin.auth.admin.updateUserById(id, { password_hash: e.encrypted_password })
+        const { rows: v } = await db24.query('select md5(encrypted_password) = md5($1) as igual from auth.users where id = $2', [e.encrypted_password, id])
+        console.log(error ? `  ❌ ${e.email}: ${error.message}` : `  ✅ ${e.first_name} ${e.last_name} · misma contraseña que en LVE: ${v[0]?.igual ? 'sí' : 'NO'}`)
+      }
+    }
+    if (!APLICAR) console.log('\nNo se escribió nada.')
+    await lve.end(); await db24.end()
+    return
+  }
 
   const plan = []
-  for (const item of lista) {
+  for (const item of lista ?? []) {
     const q = norm(item.quien)
     const cand = q.includes('@')
       ? empleados.filter((e) => e.email.toLowerCase() === q)
