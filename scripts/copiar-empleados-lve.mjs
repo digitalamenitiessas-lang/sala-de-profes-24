@@ -114,10 +114,14 @@ async function run() {
     console.log(`\n${APLICAR ? '✍️  RESINCRONIZANDO' : '👀 SOLO MUESTRA (agregá --aplicar para copiar la clave)'} — ${distintos.length} con contraseña distinta a la de LVE\n`)
     for (const e of distintos) console.log(`  🔑 ${e.first_name} ${e.last_name} <${e.email}>`)
     if (APLICAR && distintos.length) {
-      const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+      // updateUserById ignora password_hash (solo lo toma createUser): se escribe
+      // directo en auth.users de la 24, que es lo mismo que guarda Supabase.
       for (const e of distintos) {
         const id = cuenta24.get(e.email.toLowerCase()).id
-        const { error } = await admin.auth.admin.updateUserById(id, { password_hash: e.encrypted_password })
+        let error = null
+        try {
+          await db24.query('update auth.users set encrypted_password = $1, updated_at = now() where id = $2', [e.encrypted_password, id])
+        } catch (err) { error = err }
         const { rows: v } = await db24.query('select md5(encrypted_password) = md5($1) as igual from auth.users where id = $2', [e.encrypted_password, id])
         console.log(error ? `  ❌ ${e.email}: ${error.message}` : `  ✅ ${e.first_name} ${e.last_name} · misma contraseña que en LVE: ${v[0]?.igual ? 'sí' : 'NO'}`)
       }
