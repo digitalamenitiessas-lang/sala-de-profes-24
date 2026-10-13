@@ -109,6 +109,10 @@ export function mapFudoProductCategory(fudoCategory: string | null | undefined):
 } {
   const c = norm(fudoCategory)
   if (!c) return { area: 'otros', category: null }
+  // Hay cuentas de Fudo que cargan descartables y limpieza como productos con
+  // stock (no como ingredientes): mismo criterio que mapFudoIngredientCategory.
+  if (c.includes('limpieza')) return { area: 'limpieza', category: 'limpieza' }
+  if (c.includes('descart')) return { area: 'descartables', category: 'desechables' }
   if (c.includes('pastel') || c.includes('postre') || c.includes('desayuno') || c.includes('merienda')) {
     return { area: 'pasteleria', category: 'panaderia' }
   }
