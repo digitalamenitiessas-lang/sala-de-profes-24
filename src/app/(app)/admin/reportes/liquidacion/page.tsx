@@ -24,7 +24,18 @@ type DayDetail = {
   status: string
   clockOutType: string
   attendanceId?: string
+  /** Rol del turno de ese día ('mixto' si hizo dos turnos con roles distintos) */
+  role: string
+  pay: number
+  /** Horas según el fichaje, antes de recortar al turno */
+  hoursFichadas: number
+  /** Nombre del feriado si ese día lo era (se paga 50% más) */
+  feriado: string | null
+  revisar?: boolean
+  motivoRevisar?: string | null
 }
+
+type RolePay = { role: string; hours: number; hourlyRate: number; pay: number }
 
 type Employee = {
   id: string
@@ -37,8 +48,14 @@ type Employee = {
   avgHoursPerDay: number
   missingCheckouts: number
   totalPay: number
+  byRole: RolePay[]
+  horasFeriado: number
+  /** Días con turno sin fichar y el motivo que anotó el encargado */
+  ausencias: { fecha: string; motivo: string; etiqueta: string; nota: string | null }[]
   days: DayDetail[]
 }
+
+const rolLabel = (r: string) => (r === 'mixto' ? 'Mixto' : ROLES[r as AppRole]?.label ?? r)
 
 type Summary = {
   totalEmployees: number
@@ -46,6 +63,7 @@ type Summary = {
   totalDays: number
   totalPay: number
   missingCheckouts: number
+  diasRevisar?: number
 }
 
 const PERIOD_OPTIONS = [
@@ -66,6 +84,10 @@ export default function LiquidacionPage() {
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [loaded, setLoaded] = useState(false)
+  const [feriados, setFeriados] = useState<{ fecha: string; nombre: string }[]>([])
+  const [nuevoFeriado, setNuevoFeriado] = useState({ fecha: '', nombre: '' })
+  const [guardandoFeriado, setGuardandoFeriado] = useState(false)
+  const [bajandoPdf, setBajandoPdf] = useState(false)
 
   const getPeriod = useCallback(() => {
     const monthStart = startOfMonth(refDate)
@@ -94,11 +116,54 @@ export default function LiquidacionPage() {
       if (json.employees) {
         setEmployees(json.employees)
         setSummary(json.summary)
+        setFeriados(json.feriados ?? [])
         setLoaded(true)
       }
     } catch { /* ignore */ }
     setLoading(false)
   }, [getPeriod])
+
+  // PDF con el diseño de LVE (lo arma el servidor con la misma cuenta)
+  const descargarPdf = useCallback(async () => {
+    const { from, to } = getPeriod()
+    setBajandoPdf(true)
+    try {
+      const res = await fetch(`/api/admin/liquidacion/pdf?from=${from}&to=${to}`, { credentials: 'include' })
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? 'No se pudo generar el PDF')
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Liquidacion LVE 24 y Maipu ${from} a ${to}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 30_000)
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'No se pudo generar el PDF')
+    } finally {
+      setBajandoPdf(false)
+    }
+  }, [getPeriod])
+
+  // Agrega o quita un feriado y recalcula la liquidación
+  const cambiarFeriado = useCallback(async (accion: 'agregar' | 'quitar', fecha: string, nombre = '') => {
+    setGuardandoFeriado(true)
+    try {
+      const res = await fetch('/api/admin/feriados', {
+        method: accion === 'agregar' ? 'POST' : 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(accion === 'agregar' ? { fecha, nombre } : { fecha }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(json?.error ?? 'No se pudo guardar')
+      setNuevoFeriado({ fecha: '', nombre: '' })
+      await fetchData()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : 'No se pudo guardar')
+    } finally {
+      setGuardandoFeriado(false)
+    }
+  }, [fetchData])
 
   const formatMoney = (n: number) =>
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n)
@@ -122,19 +187,33 @@ export default function LiquidacionPage() {
 
     // Per employee
     csv += `DETALLE POR EMPLEADO\n`
-    csv += `Nombre,Rol,Tarifa/h,Días,Horas,Promedio/día,Sin egreso,Total a pagar\n`
+    csv += `Nombre,Rol del turno,Tarifa/h,Horas,Subtotal\n`
     for (const e of employees) {
-      csv += `"${e.firstName} ${e.lastName}",${ROLES[e.role as AppRole]?.label ?? e.role},$${e.hourlyRate},${e.totalDays},${e.totalHours},${e.avgHoursPerDay},${e.missingCheckouts},"${formatMoney(e.totalPay)}"\n`
+      for (const r of e.byRole) {
+        csv += `"${e.firstName} ${e.lastName}",${rolLabel(r.role)},$${r.hourlyRate},${r.hours},"${formatMoney(r.pay)}"\n`
+      }
+      csv += `"${e.firstName} ${e.lastName}",TOTAL (${e.totalDays} días; sin egreso: ${e.missingCheckouts}),,${e.totalHours},"${formatMoney(e.totalPay)}"\n`
+    }
+
+    // Ausencias con motivo
+    if (employees.some(e => e.ausencias.length > 0)) {
+      csv += `\nSIN FICHAR (MOTIVO)\n`
+      csv += `Nombre,Fecha,Motivo,Detalle\n`
+      for (const e of employees) {
+        for (const a of e.ausencias) {
+          csv += `"${e.firstName} ${e.lastName}",${a.fecha},${a.etiqueta},"${(a.nota ?? '').replace(/"/g, "'")}"\n`
+        }
+      }
     }
 
     // Day by day for each employee
     csv += `\nDETALLE DÍA POR DÍA\n`
-    csv += `Nombre,Fecha,Día,Ingreso,Egreso,Tipo egreso,Horas\n`
+    csv += `Nombre,Fecha,Día,Feriado,Rol del turno,Ingreso,Egreso,Tipo egreso,Horas fichadas,Horas pagas,A pagar\n`
     for (const e of employees) {
       for (const d of e.days) {
         const dayName = format(new Date(d.date + 'T12:00:00'), 'EEEE', { locale: es })
         const typeLabel = d.clockOutType === 'auto' ? 'Automático' : d.clockOutType === 'edited' ? 'Editado' : 'Manual'
-        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}",${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hours}\n`
+        csv += `"${e.firstName} ${e.lastName}",${d.date},"${dayName}","${d.feriado ? `Sí (+50%): ${d.feriado}` : ''}",${rolLabel(d.role)},${d.clockIn},${d.clockOut ?? '-'},${typeLabel},${d.hoursFichadas},${d.hours},"${formatMoney(d.pay)}"\n`
       }
     }
 
@@ -216,6 +295,67 @@ export default function LiquidacionPage() {
             </div>
           </FadeIn>
 
+          {(summary.diasRevisar ?? 0) > 0 && (
+            <div className="flex items-start gap-2 rounded-xl bg-[#fef2f2] p-3 text-xs text-[#a3302d]">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p>
+                <b>{summary.diasRevisar} día{summary.diasRevisar !== 1 ? 's' : ''} para revisar</b> (marcados en rojo en cada persona).
+                Casi siempre es un turno mal cargado: se paga lo fichado, pero conviene corregir el turno en Turnos para que quede bien.
+              </p>
+            </div>
+          )}
+
+          {/* Reglas y feriados del período */}
+          <div className="card-elevated space-y-2 rounded-xl p-3 text-xs text-[#5c4a42]">
+            <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Cómo se calcula</p>
+            <p>
+              Se paga desde el inicio del turno (llegar antes no suma) y hasta la salida, sin pasar el fin del turno
+              salvo que el encargado haya corregido la salida (✏️ = horas extra autorizadas). Si el turno estaba mal
+              cargado (trabajó en otro horario), se paga lo fichado. Licencias y ausencias no suman. Feriados: 50% más.
+            </p>
+            <div>
+              <p className="mb-1 font-semibold text-[#3d2c24]">Feriados del período</p>
+              {feriados.length === 0 && <p className="text-[#a39e97]">Ninguno.</p>}
+              <ul className="space-y-0.5">
+                {feriados.map(f => (
+                  <li key={f.fecha} className="flex items-center gap-2">
+                    <span className="w-20 shrink-0 capitalize">{format(new Date(f.fecha + 'T12:00:00'), 'EEE d MMM', { locale: es })}</span>
+                    <span className="flex-1 truncate">{f.nombre}</span>
+                    <button
+                      disabled={guardandoFeriado}
+                      onClick={() => { if (window.confirm(`¿Quitar el feriado del ${f.fecha}?`)) void cambiarFeriado('quitar', f.fecha) }}
+                      className="text-[10px] font-semibold text-[#ea504c] disabled:opacity-50"
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-2 flex gap-1.5">
+                <input
+                  type="date"
+                  value={nuevoFeriado.fecha}
+                  onChange={e => setNuevoFeriado(v => ({ ...v, fecha: e.target.value }))}
+                  className="rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-xs"
+                />
+                <input
+                  value={nuevoFeriado.nombre}
+                  onChange={e => setNuevoFeriado(v => ({ ...v, nombre: e.target.value }))}
+                  placeholder="Ej: Batalla de Tucumán"
+                  maxLength={120}
+                  className="min-w-0 flex-1 rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-xs"
+                />
+                <button
+                  disabled={guardandoFeriado || !nuevoFeriado.fecha || !nuevoFeriado.nombre.trim()}
+                  onClick={() => void cambiarFeriado('agregar', nuevoFeriado.fecha, nuevoFeriado.nombre)}
+                  className="rounded-lg bg-[#3d2c24] px-2.5 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  Agregar
+                </button>
+              </div>
+            </div>
+          </div>
+
           {/* KPIs row */}
           <div className="grid grid-cols-3 gap-2">
             <div className="card-elevated rounded-xl p-3 text-center">
@@ -269,7 +409,15 @@ export default function LiquidacionPage() {
             </FadeIn>
           )}
 
-          {/* Export button */}
+          {/* Export buttons */}
+          <button
+            onClick={descargarPdf}
+            disabled={bajandoPdf}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-60"
+          >
+            {bajandoPdf ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {bajandoPdf ? 'Armando el PDF…' : 'Descargar PDF'}
+          </button>
           <button
             onClick={handleExport}
             className="flex w-full items-center justify-center gap-2 rounded-xl border-2 border-[#006d5a] py-3 text-sm font-bold text-[#006d5a] transition-all hover:bg-[#e8f5f1] active:scale-[0.98]"
@@ -305,7 +453,13 @@ export default function LiquidacionPage() {
                         {emp.firstName} {emp.lastName}
                       </p>
                       <p className="text-[11px] text-[#a39e97]">
-                        {roleConfig?.emoji} {roleConfig?.label} · {formatMoney(emp.hourlyRate)}/h · {emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
+                        {emp.byRole.length > 1
+                          ? emp.byRole.map((r) => `${rolLabel(r.role)} ${r.hours}h`).join(' · ')
+                          : <>{roleConfig?.emoji} {rolLabel(emp.byRole[0]?.role ?? emp.role)} · {formatMoney(emp.byRole[0]?.hourlyRate ?? emp.hourlyRate)}/h</>}
+                        {' · '}{emp.totalDays} día{emp.totalDays !== 1 ? 's' : ''}
+                        {emp.ausencias.length > 0 && ` · ${emp.ausencias.length} ausencia${emp.ausencias.length !== 1 ? 's' : ''}`}
+                        {emp.horasFeriado > 0 && ` · ${emp.horasFeriado}h en feriado`}
+                        {emp.days.some(d => d.revisar) && <span className="font-semibold text-[#ea504c]">{` · ⚠️ ${emp.days.filter(d => d.revisar).length} a revisar`}</span>}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -336,12 +490,29 @@ export default function LiquidacionPage() {
                         </div>
                       )}
 
+                      {/* Ausencias con motivo */}
+                      {emp.ausencias.length > 0 && (
+                        <div className="px-4 pt-3">
+                          <p className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">Sin fichar (motivo)</p>
+                          <ul className="space-y-0.5 text-xs text-[#3d2c24]">
+                            {emp.ausencias.map(a => (
+                              <li key={a.fecha} className="flex gap-2">
+                                <span className="w-20 shrink-0 capitalize text-[#7d6c64]">{format(new Date(a.fecha + 'T12:00:00'), 'EEE d MMM', { locale: es })}</span>
+                                <span className="font-semibold text-[#3b6ab5]">{a.etiqueta}</span>
+                                {a.nota && <span className="truncate italic text-[#7d6c64]">“{a.nota}”</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
                       {/* Day-by-day table */}
                       <div className="px-4 py-3">
                         <table className="w-full text-xs">
                           <thead>
                             <tr className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">
                               <th className="pb-2 text-left">Fecha</th>
+                              <th className="pb-2 text-left">Rol</th>
                               <th className="pb-2 text-center">Ingreso</th>
                               <th className="pb-2 text-center">Egreso</th>
                               <th className="pb-2 text-right">Horas</th>
@@ -354,7 +525,10 @@ export default function LiquidacionPage() {
                                 <tr key={d.date} className="border-t border-[#ebe6df]/50">
                                   <td className="py-1.5 capitalize text-[#3d2c24]">
                                     {format(new Date(d.date + 'T12:00:00'), 'EEE d MMM', { locale: es })}
+                                    {d.feriado && <span className="ml-1 rounded bg-[#fdf6ec] px-1 text-[9px] font-bold normal-case text-[#b0762a]" title={d.feriado}>Feriado +50%</span>}
+                                    {d.revisar && <span className="block text-[9px] font-semibold normal-case text-[#ea504c]">⚠️ {d.motivoRevisar ?? 'Revisar'}</span>}
                                   </td>
+                                  <td className={`py-1.5 ${d.role !== emp.role ? 'font-semibold text-[#b0762a]' : 'text-[#7d6c64]'}`}>{rolLabel(d.role)}</td>
                                   <td className="py-1.5 text-center tabular-nums text-[#3d2c24]">{d.clockIn}</td>
                                   <td className={`py-1.5 text-center tabular-nums ${!d.clockOut ? 'text-[#ea504c] font-semibold' : 'text-[#3d2c24]'}`}>
                                     {d.clockOut ?? '—'}{typeIcon}
@@ -369,16 +543,27 @@ export default function LiquidacionPage() {
                                   </td>
                                   <td className={`py-1.5 text-right tabular-nums font-semibold ${d.hours > 0 ? 'text-[#3d2c24]' : 'text-[#ea504c]'}`}>
                                     {d.hours > 0 ? `${d.hours}h` : '—'}
+                                    {Math.abs(d.hoursFichadas - d.hours) >= 0.1 && (
+                                      <span className="block text-[9px] font-normal text-[#a39e97]" title="Se paga desde el inicio del turno y hasta su fin (salvo salida autorizada)">
+                                        fichó {d.hoursFichadas}h
+                                      </span>
+                                    )}
                                   </td>
                                 </tr>
                               )
                             })}
                           </tbody>
                           <tfoot>
-                            <tr className="border-t-2 border-[#ebe6df]">
-                              <td colSpan={3} className="py-2 text-sm font-bold text-[#3d2c24]">
-                                {emp.totalHours}h × {formatMoney(emp.hourlyRate)}
-                              </td>
+                            {emp.byRole.map((r, i) => (
+                              <tr key={r.role} className={i === 0 ? 'border-t-2 border-[#ebe6df]' : ''}>
+                                <td colSpan={4} className="pt-2 text-[12px] text-[#5c4a42]">
+                                  {rolLabel(r.role)}: {r.hours}h × {formatMoney(r.hourlyRate)}
+                                </td>
+                                <td className="pt-2 text-right text-[12px] tabular-nums text-[#5c4a42]">{formatMoney(r.pay)}</td>
+                              </tr>
+                            ))}
+                            <tr>
+                              <td colSpan={4} className="py-2 text-sm font-bold text-[#3d2c24]">Total</td>
                               <td className="py-2 text-right text-sm font-bold text-[#006d5a]">
                                 {formatMoney(emp.totalPay)}
                               </td>

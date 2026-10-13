@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ClipboardList,
   Clock,
+  CreditCard,
   History,
   Loader2,
   MessageCircle,
@@ -124,7 +125,7 @@ const REPORT_LINKS: { label: string; href: string }[] = [
 
 // Accesos rápidos (ex /admin)
 const QUICK_LINKS = [
-  { href: '/admin/reportes/ventas', icon: TrendingUp, label: 'Reportes de ventas', color: '#006d5a' },
+  { href: '/pedidos/cuentas', icon: CreditCard, label: 'Cuentas a pagar', color: '#d4943a' },
   { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#8b5e34' },
   { href: '/ventas?m=personal', icon: Users, label: 'Consumo del personal', color: '#ea504c' },
   { href: '/equipo', icon: Users, label: 'Gestionar Equipo', color: '#8b5e34' },
@@ -212,6 +213,7 @@ export default function ControlPage() {
   const [fudoUnmapped, setFudoUnmapped] = useState<FudoUnmapped | null>(null)
   const [creatingFromFudo, setCreatingFromFudo] = useState(false)
   const [createResult, setCreateResult] = useState<string | null>(null)
+  const [pendingDebt, setPendingDebt] = useState<{ amount: number; count: number } | null>(null)
 
   // -------------------------------------------------------------------------
   // Loaders — cada sección carga y falla de forma independiente
@@ -346,6 +348,27 @@ export default function ControlPage() {
     }
   }, [])
 
+  // Deuda con proveedores: recibos pendientes de pago. Silencioso — si falla, no aparece.
+  const loadPendingDebt = useCallback(async () => {
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('stock_receipts')
+        .select('cost_total')
+        .or('payment_status.is.null,payment_status.neq.pagado')
+        .not('cost_total', 'is', null)
+        .gt('cost_total', 0)
+        .limit(500)
+      if (error) throw error
+      const rows = (data ?? []) as { cost_total: number }[]
+      const amount = rows.reduce((s, r) => s + Number(r.cost_total), 0)
+      setPendingDebt({ amount, count: rows.length })
+    } catch (err) {
+      console.error('[control] pending_debt', err)
+      setPendingDebt(null)
+    }
+  }, [])
+
   // Items de Fudo (con control de stock) que todavía no existen en LVE.
   // Silencioso: si Fudo no responde, la fila simplemente no aparece.
   const loadFudoUnmapped = useCallback(async () => {
@@ -392,8 +415,8 @@ export default function ControlPage() {
 
   useEffect(() => {
     if (!profile || !isManager) return
-    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadExpiryLots(), loadAttendance(), loadFudoUnmapped(), loadHistory()])
-  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadExpiryLots, loadAttendance, loadFudoUnmapped, loadHistory])
+    void Promise.all([loadCritical(), loadAnomalies(), loadIntel(), loadExpiryLots(), loadAttendance(), loadFudoUnmapped(), loadHistory(), loadPendingDebt()])
+  }, [profile, isManager, loadCritical, loadAnomalies, loadIntel, loadExpiryLots, loadAttendance, loadFudoUnmapped, loadHistory, loadPendingDebt])
 
   // -------------------------------------------------------------------------
   // Access control
@@ -455,6 +478,7 @@ export default function ControlPage() {
     + (fudoUnmappedCount > 0 ? 1 : 0)
     + (unlinkedIntermediatesCount > 0 ? 1 : 0)
     + (costDivergenceCount > 0 ? 1 : 0)
+    + (pendingDebt && pendingDebt.amount > 0 ? 1 : 0)
 
   // d. Fichajes sospechosos
   const attendanceAlerts = attendance.data ?? []
@@ -685,7 +709,7 @@ export default function ControlPage() {
         {/* b2. Por vencer (vida útil de lotes) */}
         <ControlSection
           id="sec-vencer"
-          title="⏰ Por vencer"
+          title="Por vencer"
           icon={Clock}
           tone="orange"
           count={expiryItems.length}
@@ -698,7 +722,7 @@ export default function ControlPage() {
             return (
               <Link
                 key={lot.id}
-                href="/stock"
+                href="/stock/lotes"
                 className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-[#f9f7f3] active:bg-[#f3efe9]"
               >
                 <div className="min-w-0 flex-1">
@@ -733,6 +757,14 @@ export default function ControlPage() {
           error={intel.error}
           emptyText="No hay datos pendientes de completar"
         >
+          {pendingDebt && pendingDebt.amount > 0 && (
+            <SectionRow
+              href="/pedidos/cuentas"
+              title={`$${Math.round(pendingDebt.amount).toLocaleString('es-AR')} pendiente de pago a proveedores`}
+              detail={`${pendingDebt.count} recibo${pendingDebt.count !== 1 ? 's' : ''} sin saldar. Revisá si hay facturas vencidas.`}
+              meta="Ver cuentas"
+            />
+          )}
           {fudoUnmappedCount > 0 && (
             <div className="flex items-center gap-3 bg-[#fbf6e0]/50 px-4 py-3">
               <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#e8f5f1]">

@@ -11,7 +11,7 @@ import { apiFetcher } from '@/lib/swr/fetchers'
 export type OrderSummary = {
   id: number
   name: string
-  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
+  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
   parent_order_id: number | null
   template_name: string | null
   chef_name: string | null
@@ -19,6 +19,7 @@ export type OrderSummary = {
   completed_at: string | null
   submitted_at: string | null
   reviewed_at: string | null
+  review_notes?: string | null
   inputs: { name: string; qty: number; unit: string }[]
   outputs: { name: string; qty: number; unit: string; is_waste: boolean }[]
   summary: {

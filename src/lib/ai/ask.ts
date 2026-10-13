@@ -606,7 +606,7 @@ async function runProduccion(admin: SupabaseClient, plan: QueryPlan): Promise<As
   const rows = list.slice(0, plan.limite ?? 15).map((o) => ({
     produccion: o.name,
     fecha: new Date(o.created_at).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' }),
-    estado: o.status === 'completed' ? 'validada' : o.status === 'pending_review' ? 'a validar' : o.status,
+    estado: o.status === 'completed' ? 'validada' : o.status === 'pending_review' ? 'a validar' : o.status === 'rejected' ? 'rechazada' : o.status,
     costo_unidad: o.cost_per_output_unit ? money(Number(o.cost_per_output_unit)) : '—',
     eficiencia: o.efficiency_pct != null ? `${o.efficiency_pct}%` : '—',
   }))

@@ -23,6 +23,21 @@ export function mustClockIn(
   return true
 }
 
+/**
+ * Roles que un encargado puede crear y administrar: de encargado para abajo.
+ * A un socio solo lo crea o administra otro socio.
+ */
+export const ENCARGADO_MANAGED_ROLES: readonly AppRole[] = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+
+/**
+ * Puesto que se muestra y que se usa por defecto en los turnos. El cajero
+ * tiene permisos de encargado (profiles.role = 'encargado') y su puesto queda
+ * en profiles.puesto = 'cajero' (la base lo convierte al elegir "cajero").
+ */
+export function puestoDe(p: { role: AppRole | string; puesto?: AppRole | string | null }): AppRole {
+  return (p.puesto ?? p.role) as AppRole
+}
+
 /** Can this role manage the business? (socio + encargado) */
 export function isManagerOrAbove(role: string | AppRole | null | undefined): boolean {
   return !!role && MANAGER_ROLES.has(role)

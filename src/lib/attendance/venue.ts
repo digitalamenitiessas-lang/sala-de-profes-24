@@ -10,4 +10,3 @@ export const VENUE = {
   name: process.env.NEXT_PUBLIC_VENUE_NAME ?? 'La Vieja Escuela — 24 y Maipú',
 } as const
 
-export const VENUE_CONFIGURED = Number.isFinite(VENUE.lat) && Number.isFinite(VENUE.lng)

@@ -12,7 +12,8 @@ const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KE
 const FROM_EMAIL = process.env.EMAIL_FROM ?? 'Sala de Profes <info@laviejaescuelabar.com.ar>'
 // URL pública de la app para el botón de los mails. Vercel completa
 // VERCEL_PROJECT_PRODUCTION_URL solo; NEXT_PUBLIC_APP_URL la pisa (dominio propio).
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL
+// Exportada para otros mails armados afuera (p. ej. el resumen semanal).
+export const APP_URL = process.env.NEXT_PUBLIC_APP_URL
   ?? (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : 'http://localhost:3000')
 
 // ---------------------------------------------------------------------------
@@ -110,6 +111,8 @@ export async function notifyOrderToEncargados(opts: {
   note?: string | null
   /** Creador del pedido: se excluye del mail (no se autonotifica) */
   excludeUserId?: string | null
+  /** Lo mandó un empleado (no encargado): es una sugerencia, el pedido lo hace el encargado */
+  sugerencia?: boolean
 }) {
   const emails = await getEmailsByRole('encargado', opts.excludeUserId ?? null)
   const icon = opts.type === 'barra' ? '☕' : '🍳'
@@ -124,10 +127,10 @@ export async function notifyOrderToEncargados(opts: {
   }
 
   const html = wrapTemplate(
-    `${icon} Nuevo pedido de ${label}`,
+    opts.sugerencia ? '💡 Sugerencia de compra' : `${icon} Nuevo pedido de ${label}`,
     `
       <p style="color: #6b6560; margin: 0 0 12px; font-size: 14px;">
-        <strong>${opts.authorName}</strong> creó un pedido:
+        <strong>${opts.authorName}</strong> ${opts.sugerencia ? 'sugiere pedir (revisalo y hacé el pedido en Compras)' : 'creó un pedido'}:
       </p>
       <ul style="padding-left: 20px; margin: 0 0 12px;">${itemsList}</ul>
       <p style="margin: 0;">
@@ -139,7 +142,7 @@ export async function notifyOrderToEncargados(opts: {
     `,
   )
 
-  await sendEmail(emails, `${icon} Pedido de ${label} — ${opts.authorName}`, html)
+  await sendEmail(emails, opts.sugerencia ? `💡 Sugerencia de compra — ${opts.authorName}` : `${icon} Pedido de ${label} — ${opts.authorName}`, html)
 }
 
 /** Notify the responsible person (only) about expediente movements */
@@ -210,7 +213,8 @@ export async function notifyOrderStatusChange(opts: {
   userId: string
   productName: string
   quantity: string
-  newStatus: 'ordered' | 'received' | 'cancelled'
+  /** no_vino: el proveedor no trajo ESTE producto (el resto del pedido sigue) */
+  newStatus: 'ordered' | 'received' | 'cancelled' | 'no_vino'
 }) {
   const email = await getUserEmail(opts.userId)
   if (!email) return
@@ -219,6 +223,7 @@ export async function notifyOrderStatusChange(opts: {
     ordered: { icon: '🚚', label: 'Enviado al proveedor', color: '#d4943a' },
     received: { icon: '✅', label: 'Recibido', color: '#006d5a' },
     cancelled: { icon: '❌', label: 'Cancelado', color: '#ea504c' },
+    no_vino: { icon: '🚫', label: 'No vino', color: '#d4943a' },
   }
 
   const s = statusLabels[opts.newStatus]
@@ -238,4 +243,35 @@ export async function notifyOrderStatusChange(opts: {
   )
 
   await sendEmail([email], `${s.icon} Pedido: ${opts.productName} — ${s.label}`, html)
+}
+
+// ---------------------------------------------------------------------------
+// Mail con adjuntos (resumen semanal). Devuelve si salió, para que el cron
+// lo informe (los otros envíos son "silenciosos").
+// ---------------------------------------------------------------------------
+export async function enviarMailConAdjuntos(opts: {
+  to: string[]
+  subject: string
+  html: string
+  adjuntos?: { filename: string; content: Buffer }[]
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!resend) return { ok: false, error: 'Falta RESEND_API_KEY' }
+  if (opts.to.length === 0) return { ok: false, error: 'Sin destinatarios' }
+  try {
+    const { error } = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: opts.to,
+      subject: opts.subject,
+      html: opts.html,
+      attachments: (opts.adjuntos ?? []).map((a) => ({ filename: a.filename, content: a.content })),
+    })
+    return error ? { ok: false, error: error.message } : { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Error' }
+  }
+}
+
+/** Mails de quienes tienen alguno de esos roles (activos). */
+export async function mailsDeRoles(roles: string[]): Promise<string[]> {
+  return getEmailsByRoles(roles)
 }

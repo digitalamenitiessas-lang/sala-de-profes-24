@@ -1,4 +1,4 @@
-export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha'
+export type AppRole = 'socio' | 'encargado' | 'chef' | 'barista' | 'runner' | 'cocina' | 'bacha' | 'cajero'
 export type AnnouncementTypeValue = 'general' | 'urgente' | 'recordatorio' | 'operativo'
 export type PriorityValue = 'baja' | 'media' | 'alta' | 'critica'
 export type AlertTypeValue = 'low_stock' | 'upcoming_purchase' | 'critical'
@@ -435,6 +435,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      ausencias: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          fecha: string
+          id: string
+          motivo: string
+          nota: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          fecha: string
+          id?: string
+          motivo: string
+          nota?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          fecha?: string
+          id?: string
+          motivo?: string
+          nota?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       bar_orders: {
         Row: {
@@ -1136,6 +1169,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      descartables_producto: {
+        Row: { cantidad: number; created_at: string; created_by: string | null; fudo_product_id: string; stock_item_id: string }
+        Insert: { cantidad?: number; created_at?: string; created_by?: string | null; fudo_product_id: string; stock_item_id: string }
+        Update: { cantidad?: number; created_at?: string; created_by?: string | null; fudo_product_id?: string; stock_item_id?: string }
+        Relationships: []
+      }
+      descartables_consumidos: {
+        Row: { created_at: string; detalle: Json; fudo_product_id: string; fudo_sale_item_id: string; vendido_at: string }
+        Insert: { created_at?: string; detalle?: Json; fudo_product_id: string; fudo_sale_item_id: string; vendido_at: string }
+        Update: { created_at?: string; detalle?: Json; fudo_product_id?: string; fudo_sale_item_id?: string; vendido_at?: string }
+        Relationships: []
+      }
+      feriados: {
+        Row: { created_at: string; created_by: string | null; fecha: string; nombre: string }
+        Insert: { created_at?: string; created_by?: string | null; fecha: string; nombre: string }
+        Update: { created_at?: string; created_by?: string | null; fecha?: string; nombre?: string }
+        Relationships: []
       }
       fudo_reintentos: {
         Row: {
@@ -2330,6 +2381,7 @@ export type Database = {
           is_active: boolean
           last_name: string
           phone: string | null
+          puesto: Database["public"]["Enums"]["app_role"] | null
           role: Database["public"]["Enums"]["app_role"]
           settings: Json
           updated_at: string
@@ -2348,6 +2400,7 @@ export type Database = {
           is_active?: boolean
           last_name: string
           phone?: string | null
+          puesto?: Database["public"]["Enums"]["app_role"] | null
           role?: Database["public"]["Enums"]["app_role"]
           settings?: Json
           updated_at?: string
@@ -2366,6 +2419,7 @@ export type Database = {
           is_active?: boolean
           last_name?: string
           phone?: string | null
+          puesto?: Database["public"]["Enums"]["app_role"] | null
           role?: Database["public"]["Enums"]["app_role"]
           settings?: Json
           updated_at?: string
@@ -2374,6 +2428,7 @@ export type Database = {
       }
       protocolo_tareas: {
         Row: {
+          medicion: number | null
           id: string
           protocolo_id: string
           fecha: string
@@ -2395,6 +2450,7 @@ export type Database = {
           created_at: string
         }
         Insert: {
+          medicion?: number | null
           id?: string
           protocolo_id: string
           fecha: string
@@ -2416,6 +2472,7 @@ export type Database = {
           created_at?: string
         }
         Update: {
+          medicion?: number | null
           id?: string
           protocolo_id?: string
           fecha?: string
@@ -2448,6 +2505,9 @@ export type Database = {
       }
       protocolos: {
         Row: {
+          medicion_etiqueta: string | null
+          medicion_unidad: string | null
+          registro: string | null
           id: string
           nombre: string
           descripcion: string | null
@@ -2460,6 +2520,9 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          medicion_etiqueta?: string | null
+          medicion_unidad?: string | null
+          registro?: string | null
           id?: string
           nombre: string
           descripcion?: string | null
@@ -2472,6 +2535,9 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          medicion_etiqueta?: string | null
+          medicion_unidad?: string | null
+          registro?: string | null
           id?: string
           nombre?: string
           descripcion?: string | null
@@ -2675,6 +2741,9 @@ export type Database = {
           cost_per_portion: number | null
           created_at: string | null
           created_by: string
+          editada_en_app_at: string | null
+          editada_por: string | null
+          fudo_synced_at: string | null
           id: string
           ingredients: Json | null
           is_active: boolean | null
@@ -2691,6 +2760,9 @@ export type Database = {
           cost_per_portion?: number | null
           created_at?: string | null
           created_by: string
+          editada_en_app_at?: string | null
+          editada_por?: string | null
+          fudo_synced_at?: string | null
           id?: string
           ingredients?: Json | null
           is_active?: boolean | null
@@ -2707,6 +2779,9 @@ export type Database = {
           cost_per_portion?: number | null
           created_at?: string | null
           created_by?: string
+          editada_en_app_at?: string | null
+          editada_por?: string | null
+          fudo_synced_at?: string | null
           id?: string
           ingredients?: Json | null
           is_active?: boolean | null
@@ -2769,6 +2844,8 @@ export type Database = {
       }
       shifts: {
         Row: {
+          aviso_encargado_at: string | null
+          aviso_ingreso_at: string | null
           color: string
           created_at: string
           created_by: string
@@ -2783,6 +2860,8 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          aviso_encargado_at?: string | null
+          aviso_ingreso_at?: string | null
           color?: string
           created_at?: string
           created_by: string
@@ -2797,6 +2876,8 @@ export type Database = {
           user_id: string
         }
         Update: {
+          aviso_encargado_at?: string | null
+          aviso_ingreso_at?: string | null
           color?: string
           created_at?: string
           created_by?: string
@@ -3885,6 +3966,7 @@ export type Database = {
         | "cocina"
         | "socio"
         | "bacha"
+        | "cajero"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -4020,6 +4102,7 @@ export const Constants = {
         "cocina",
         "socio",
         "bacha",
+        "cajero",
       ],
     },
   },
@@ -4224,7 +4307,7 @@ export type ProductionOutput = Database['public']['Tables']['production_outputs'
 export type ProductionOutputInsert = Database['public']['Tables']['production_outputs']['Insert']
 export type ProductionOutputUpdate = Database['public']['Tables']['production_outputs']['Update']
 
-export type ProductionOrderStatus = 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
+export type ProductionOrderStatus = 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
 
 // Full order with nested inputs + outputs (returned by GET /api/produccion/orders/[id])
 export type ProductionOrderDetail = ProductionOrder & {

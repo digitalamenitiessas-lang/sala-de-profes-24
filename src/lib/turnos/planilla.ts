@@ -18,6 +18,7 @@ export const ROLES_SECCION: Record<string, string> = {
   barista: 'barista', baristas: 'barista', barra: 'barista',
   cocina: 'cocina', cocinero: 'cocina', cocineros: 'cocina', cocinera: 'cocina', cocineras: 'cocina',
   bacha: 'bacha', bachas: 'bacha', bachero: 'bacha', bacheros: 'bacha', bachera: 'bacha',
+  cajero: 'cajero', cajeros: 'cajero', cajera: 'cajero', cajeras: 'cajero', caja: 'cajero',
   encargado: 'encargado', encargados: 'encargado', encargada: 'encargado', encargadas: 'encargado',
   chef: 'chef', chefs: 'chef',
   socio: 'socio', socios: 'socio',

@@ -5,13 +5,14 @@ import Link from 'next/link'
 import {
   TrendingUp, AlertTriangle, CheckCircle2, Clock, ChefHat,
   Package, Leaf, BarChart3, ChevronRight, RefreshCw, GitBranch,
-  ArrowRight, ArrowLeft, ShieldCheck, Lock, Loader2, DollarSign,
+  ArrowRight, ArrowLeft, ShieldCheck, Lock, Loader2, DollarSign, XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
+import { RechazarProduccionDialog } from '@/components/produccion/RechazarProduccionDialog'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,7 +42,7 @@ type DashboardData = {
 type OrderRow = {
   id: number
   name: string
-  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
+  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
   parent_order_id: number | null
   template_name: string | null
   chef_name: string | null
@@ -49,6 +50,7 @@ type OrderRow = {
   completed_at: string | null
   submitted_at: string | null
   reviewed_at: string | null
+  review_notes?: string | null
   inputs: { name: string; qty: number; unit: string }[]
   outputs: { name: string; qty: number; unit: string; is_waste: boolean }[]
   summary: {
@@ -161,6 +163,7 @@ export default function ProduccionDashboardPage() {
   const [period, setPeriod] = useState(30)
   const [tab, setTab] = useState<'resumen' | 'historial' | 'chefs'>('resumen')
   const [approvingId, setApprovingId] = useState<number | null>(null)
+  const [rechazando, setRechazando] = useState<OrderRow | null>(null)
 
   const canValidateProduction = isManagerOrAbove(profile?.role)
 
@@ -182,7 +185,7 @@ export default function ProduccionDashboardPage() {
 
   const completedOrders = orders.filter((o) => o.status === 'completed')
   const pendingReviewOrders = orders.filter((o) => o.status === 'pending_review')
-  const pendingOrders = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled')
+  const pendingOrders = orders.filter((o) => o.status !== 'completed' && o.status !== 'cancelled' && o.status !== 'rejected')
 
   async function approveOrder(order: OrderRow) {
     if (!canValidateProduction) {
@@ -418,6 +421,17 @@ export default function ProduccionDashboardPage() {
                       {canValidateProduction || profileLoading ? 'Validar y sync Fudo' : 'Solo socio/encargado'}
                     </button>
                   </div>
+                  {canValidateProduction && (
+                    <button
+                      type="button"
+                      onClick={() => setRechazando(order)}
+                      disabled={isApproving}
+                      className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-semibold text-[#ea504c] ring-1 ring-[#f3c9c7] disabled:opacity-50"
+                    >
+                      <XCircle className="size-3.5" />
+                      Rechazar
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -569,6 +583,7 @@ export default function ProduccionDashboardPage() {
                       pending_review: { label: 'A validar', icon: ShieldCheck, color: 'text-[#d4943a] bg-amber-50' },
                       completed:   { label: 'Completado',  icon: CheckCircle2,  color: 'text-[#006d5a] bg-[#e8f5f1]' },
                       cancelled:   { label: 'Cancelado',   icon: AlertTriangle, color: 'text-[#ea504c] bg-red-50' },
+                      rejected:    { label: 'Rechazada',   icon: XCircle,       color: 'text-[#ea504c] bg-red-50' },
                     }
                     const cfg = STATUS[o.status]
                     const Icon = cfg.icon
@@ -599,6 +614,9 @@ export default function ProduccionDashboardPage() {
                                 {formatDate(o.created_at)}
                                 {o.chef_name && ` · ${o.chef_name}`}
                               </p>
+                              {o.status === 'rejected' && o.review_notes && (
+                                <p className="mt-0.5 text-[11px] text-[#ea504c]">Motivo: {o.review_notes}</p>
+                              )}
                             </div>
                             <div className="shrink-0 text-right">
                               <EffBar pct={o.summary.efficiency_pct} />
@@ -671,6 +689,14 @@ export default function ProduccionDashboardPage() {
           Registrar nueva producción
         </Link>
       </div>
+
+      {rechazando && (
+        <RechazarProduccionDialog
+          orden={rechazando}
+          onClose={() => setRechazando(null)}
+          onDone={() => { setRechazando(null); void load() }}
+        />
+      )}
     </div>
   )
 }

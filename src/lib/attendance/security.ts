@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import { getCurrentPosition, calculateDistance, type GeoResult as RawGeoResult } from './geolocation'
-import { generateDeviceFingerprint, getDeviceLabel } from './device-fingerprint'
+import { getDeviceId, getDeviceLabel } from './device-fingerprint'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,7 +73,7 @@ export function haversineDistance(
 
 export function getDeviceFingerprint(): DeviceInfo {
   return {
-    id: generateDeviceFingerprint(),
+    id: getDeviceId(),
     userAgent: navigator.userAgent,
     language: navigator.language,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,

@@ -27,10 +27,12 @@ type Props = {
   onCreateForSlot: (userId: string, date: Date, role: AppRole) => void
 }
 
-const ROLE_ORDER: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha' as AppRole]
+const ROLE_ORDER: AppRole[] = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
 
 export function WeekGrid({ weekDays, employees, shifts, onEditShift, onDeleteShift, onCreateForSlot }: Props) {
-  const employeesWithShifts = employees.map(emp => {
+  // Los socios no usan turnos. Cada persona sale en el grupo de su rol de
+  // siempre; el día que trabaja de otra cosa, la celda lo marca.
+  const employeesWithShifts = employees.filter(emp => emp.role !== 'socio').map(emp => {
     const weekShifts = weekDays.map(day => {
       const dayStr = format(day, 'yyyy-MM-dd')
       return shifts.find(s => s.user_id === emp.id && s.shift_date === dayStr) ?? null
@@ -131,6 +133,11 @@ export function WeekGrid({ weekDays, employees, shifts, onEditShift, onDeleteShi
                           ) : (
                             <span className="text-[10px] font-bold tabular-nums text-[#3d2c24]">{time}</span>
                           )}
+                          {!isDescanso && shift.shift_role && shift.shift_role !== emp.role && (
+                            <span className="mt-0.5 rounded px-1 text-[9px] font-bold" style={{ color: ROLES[shift.shift_role]?.color ?? '#b0762a', backgroundColor: ROLES[shift.shift_role]?.bg ?? '#fdf6ec' }}>
+                              {ROLES[shift.shift_role]?.label ?? shift.shift_role}
+                            </span>
+                          )}
                           <button
                             className="absolute -right-1 -top-1 hidden size-4 items-center justify-center rounded-full bg-[#ea504c] text-white shadow-sm group-hover:flex"
                             onClick={(e) => { e.stopPropagation(); onDeleteShift(shift) }}
@@ -179,6 +186,9 @@ export function WeekGrid({ weekDays, employees, shifts, onEditShift, onDeleteShi
                               }`}
                             >
                               {shift.notes?.toLowerCase().includes('descanso') ? 'D' : `${shift.start_time.slice(0, 2)}-${shift.end_time.slice(0, 2)}`}
+                              {shift.shift_role && shift.shift_role !== emp.role && (
+                                <span className="block text-[10px] leading-none" title={ROLES[shift.shift_role]?.label}>{ROLES[shift.shift_role]?.emoji}</span>
+                              )}
                             </button>
                           ) : (
                             <div className="mt-0.5 rounded-md bg-[#faf8f5] py-1 text-[9px] text-[#d1cdc7]">—</div>

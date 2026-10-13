@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { VENUE } from '@/lib/attendance/venue'
 import { isManagerOrAbove } from '@/lib/roles'
 import { fechaOperativa, cargarDatosCierre, cierrePrevisto } from '@/lib/attendance/jornada'
+import { esRedDelLocal, ipDelPedido } from '@/lib/attendance/red-local'
 
 // ---------------------------------------------------------------------------
 // Haversine — server-safe, no browser APIs
@@ -52,8 +53,37 @@ export async function POST(request: Request) {
 
   const admin = createAdminClient()
 
+  const hdrs = await headers()
+  const ip = ipDelPedido(hdrs)
+  // Conectado al WiFi del local: está en el local, no hace falta el GPS
+  // (adentro del edificio el GPS suele marcar cualquier cosa).
+  const enRedLocal = await esRedDelLocal(admin, ip)
+
   // -------------------------------------------------------------------------
-  // GEO VALIDATION — server-side block
+  // UN CELULAR, UNA PERSONA — nadie ficha por otro con su teléfono.
+  // Solo con el identificador propio del celular (dv_…): la huella vieja se
+  // repetía entre teléfonos iguales.
+  // -------------------------------------------------------------------------
+  if (typeof device_fingerprint === 'string' && device_fingerprint.startsWith('dv_')) {
+    const { data: otro } = await admin
+      .from('attendance_logs')
+      .select('user_id, profiles!attendance_logs_user_id_fkey(first_name)')
+      .eq('operative_date', fechaOperativa())
+      .eq('device_fingerprint', device_fingerprint)
+      .neq('user_id', user.id)
+      .limit(1)
+      .maybeSingle()
+    if (otro) {
+      const nombre = (otro as unknown as { profiles: { first_name: string | null } | null }).profiles?.first_name ?? 'otra persona'
+      return NextResponse.json({
+        error: `Este celular ya se usó hoy para fichar a ${nombre}. Cada uno ficha desde su propio celular; si no tenés el tuyo, pedile al encargado que te marque "Llegó".`,
+        code: 'DEVICE_IN_USE',
+      }, { status: 403 })
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // GEO VALIDATION — server-side block (salvo en el WiFi del local)
   // Lee el venue de la config de BD; usa VENUE como fallback
   // -------------------------------------------------------------------------
   const { data: venueConfig } = await admin
@@ -67,31 +97,34 @@ export async function POST(request: Request) {
     ? (venueConfig.value as VenueConfig)
     : { lat: VENUE.lat, lng: VENUE.lng, radius_meters: VENUE.radiusM, name: VENUE.name }
 
-  if (!Number.isFinite(venue.lat) || !Number.isFinite(venue.lng)) {
+  // Sin ubicación del local (ni en la base ni en NEXT_PUBLIC_VENUE_*) no hay
+  // contra qué medir el GPS: solo se puede fichar desde el WiFi del local.
+  // (Con NaN la distancia daba NaN y la geocerca dejaba pasar a cualquiera.)
+  const venueConfigurado = Number.isFinite(venue.lat) && Number.isFinite(venue.lng)
+  if (!venueConfigurado && !enRedLocal) {
     return NextResponse.json({
       error: 'La ubicación del local no está configurada. Avisale a un encargado.',
       code: 'VENUE_NOT_CONFIGURED',
     }, { status: 503 })
   }
 
-  // GPS es obligatorio cuando hay configuración de local
-  if (!gps_lat || !gps_lng) {
+  // GPS es obligatorio fuera del WiFi del local
+  if (!enRedLocal && (!gps_lat || !gps_lng)) {
     return NextResponse.json({
       error: 'Necesitás activar el GPS para fichar. Asegurate de darle permiso de ubicación a la app.',
       code: 'GPS_REQUIRED',
     }, { status: 403 })
   }
 
-  const distM = distanceMeters(venue.lat, venue.lng, gps_lat, gps_lng)
+  const distM = venueConfigurado && gps_lat && gps_lng ? distanceMeters(venue.lat, venue.lng, gps_lat, gps_lng) : null
 
   // El GPS reporta su propio margen de error (gps_accuracy). Si dice "estás a
   // 90m ±40m", la persona podría estar a 50m (adentro): le damos ese beneficio.
   // Se capa a 100m para que una lectura por antena (accuracy enorme) no anule
   // la geocerca por completo.
   const accuracyBenefit = Math.min(typeof gps_accuracy === 'number' && gps_accuracy > 0 ? gps_accuracy : 0, 100)
-  const effectiveDist = Math.max(0, distM - accuracyBenefit)
 
-  if (effectiveDist > venue.radius_meters) {
+  if (!enRedLocal && distM !== null && Math.max(0, distM - accuracyBenefit) > venue.radius_meters) {
     return NextResponse.json({
       error: `Estás a ${distM}m de ${venue.name ?? 'el local'}. Solo podés fichar estando en el lugar.`,
       code: 'OUT_OF_RANGE',
@@ -104,9 +137,6 @@ export async function POST(request: Request) {
   const nowISO = new Date().toISOString()
   // Día operativo con corte a las 06:00: la salida a la 01:00 es del mismo día
   const todayStr = fechaOperativa()
-
-  const hdrs = await headers()
-  const ip = hdrs.get('x-forwarded-for')?.split(',')[0] ?? hdrs.get('x-real-ip') ?? null
 
   // -----------------------------------------------------------------------
   // CLOCK IN
@@ -172,8 +202,8 @@ export async function POST(request: Request) {
         user_id: user.id,
         operative_date: todayStr,
         clock_in_at: nowISO,
-        clock_in_lat: gps_lat,
-        clock_in_lng: gps_lng,
+        clock_in_lat: gps_lat ?? null,
+        clock_in_lng: gps_lng ?? null,
         clock_in_accuracy: gps_accuracy ?? null,
         clock_in_type: 'normal',
         device_fingerprint: device_fingerprint ?? null,
@@ -211,9 +241,12 @@ export async function POST(request: Request) {
     .from('attendance_logs')
     .update({
       clock_out_at: nowISO,
-      clock_out_lat: gps_lat,
-      clock_out_lng: gps_lng,
+      clock_out_lat: gps_lat ?? null,
+      clock_out_lng: gps_lng ?? null,
       clock_out_accuracy: gps_accuracy ?? null,
+      // 'manual' = la persona marcó la salida. Decía 'normal', que la base no
+      // acepta (solo manual/auto/edited): desde abril TODAS las salidas
+      // marcadas fallaban y se cerraban solas con el cierre automático.
       clock_out_type: 'manual',
       status: 'closed',
     })

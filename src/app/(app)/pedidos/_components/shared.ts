@@ -29,7 +29,18 @@ export type Order = {
 
 export type Supplier = { id: string; name: string; phone: string | null; contact_name: string | null; fudo_provider_id?: string | null }
 export type Profile = { id: string; first_name: string; last_name: string }
-export type StockLite = { id: string; name: string; unit: string; current_qty: number; fudo_skip?: boolean | null; fudo_ingredient_id?: string | null; fudo_product_id?: string | null }
+export type StockLite = { id: string; name: string; unit: string; current_qty: number; cost_per_unit?: number | null; fudo_skip?: boolean | null; fudo_ingredient_id?: string | null; fudo_product_id?: string | null; supplier_id?: string | null; has_supplier?: boolean }
+
+/**
+ * ¿Aparece en el buscador de compras? Un producto de Fudo sin ingrediente
+ * suele ser un plato del menú ("Adicional Huevo") y no se compra… salvo los
+ * de reventa (bebidas: Coca-Cola, agua) que tienen proveedor vinculado. Antes
+ * se escondían todos y no había forma de cargar la compra a Salta Refresco.
+ */
+export function esComprable(s: StockLite): boolean {
+  if (s.fudo_product_id && !s.fudo_ingredient_id) return !!s.has_supplier || !!s.supplier_id
+  return true
+}
 
 export type ExpenseLite = { id: string; provider: string | null; providerId: string | null; date: string; amount: number; ingredientIds: string[]; ingredientNames: string[] }
 export type Match = { order_id: number; source: 'cocina' | 'barra'; strength: 'fuerte' | 'probable'; why: string; expense: ExpenseLite }

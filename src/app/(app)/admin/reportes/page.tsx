@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { Users, CalendarDays, Package, BarChart2, ArrowRight, Wallet, Armchair, Bell } from 'lucide-react'
+import { Users, CalendarDays, Package, BarChart2, ArrowRight, Wallet, Armchair, Bell, TrendingUp } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
 
 const REPORTS = [
@@ -10,6 +10,7 @@ const REPORTS = [
   { href: '/admin/reportes/turnos', icon: CalendarDays, label: 'Turnos', description: 'Distribución por rol y cobertura', color: '#8b5e34' },
   { href: '/admin/reportes/stock', icon: Package, label: 'Stock', description: 'Semáforo, categorías, items críticos', color: '#ea504c' },
   { href: '/admin/reportes/liquidacion', icon: Wallet, label: 'Liquidación', description: 'Horas y sueldos por empleado del período', color: '#8b5e34' },
+  { href: '/admin/reportes/control', icon: TrendingUp, label: 'Control del personal', description: 'Asistencia, encargados y sueldos contra ventas', color: '#006d5a' },
   { href: '/admin/reportes/salon', icon: Armchair, label: 'Tiempos de servicio', description: 'Cuánto tarda una mesa, por franja', color: '#4a90d9' },
   { href: '/admin/reportes/notificaciones', icon: Bell, label: 'Notificaciones', description: 'Qué avisos se enviaron y a quién', color: '#a39e97' },
 ]

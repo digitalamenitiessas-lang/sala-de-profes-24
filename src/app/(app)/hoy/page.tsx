@@ -1,9 +1,10 @@
 'use client'
 
 // ---------------------------------------------------------------------------
-// HOY — el ciclo operativo completo en una pantalla, en el orden del papel
-// de cocina: pedir → recibir → producir → contar. Cada bloque muestra lo
-// mínimo para decidir y un botón para ir a hacerlo.
+// HOY — vista personalizada por rol:
+//   encargado/socio → 4 pasos + KPIs del día
+//   chef/cocina     → Producir + Contar + lotes por vencer + consejo IA directo
+//   barista         → vista minimal de turno + conteo de barra
 // ---------------------------------------------------------------------------
 
 import { useEffect, useState } from 'react'
@@ -15,15 +16,20 @@ import { es } from 'date-fns/locale/es'
 import {
   ShoppingCart, Truck, ChefHat, ClipboardList, ChevronRight,
   AlertTriangle, Check, Loader2, Sparkles, Minus, Plus, Ban, Send,
+  Clock, Users, Package,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, isKitchenRole } from '@/lib/roles'
 import { isStockCritical } from '@/lib/contracts/stock'
+import { fechaOperativa } from '@/lib/attendance/jornada'
+import { useAdminKpis } from '@/lib/hooks/use-admin-kpis'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { AskBar } from '@/components/ai/AskBar'
+import { lotTone, formatLotCountdown, formatQty } from '@/lib/stock/helpers'
+import { StockAlertaBanner } from '@/components/hoy/StockAlertaBanner'
 
 type PurchaseOrderLite = {
   supplier_id: string
@@ -40,25 +46,56 @@ type HoyData = {
   otherOrders: number
   incoming: { id: number; product_name: string; quantity: string; source: string }[]
   plan: { items: PlanItem[]; sellingWithoutStock: { name: string }[]; analysis: string } | null
-  /** todo lo que la casa produce — para armar el plan a mano */
   producedItems: { id: string; name: string; unit: string; current_qty: number }[]
   countNegative: { id: string; name: string; current_qty: number; unit: string }[]
   countCritical: number
-  /** conteo diario de elaborados: cuántos se contaron hoy */
   conteoHoy: { contados: number; total: number; ultimo: string | null } | null
 }
 
-// La vista se cachea para que volver desde un paso sea instantáneo,
-// y el plan armado se guarda POR FECHA: entrás a un paso, volvés, y está igual.
+type ShiftInfo = {
+  clock_in_at: string
+  clock_out_at: string | null
+  status: string
+}
+
+type ExpiryLotBrief = {
+  id: number
+  stock_item_name: string
+  expires_in_days: number
+  qty_remaining: number
+  unit: string
+}
+
+// La vista se cachea para que volver desde un paso sea instantáneo
 const CACHE_KEY = 'hoy-cache-v1'
 const CACHE_TTL_MS = 10 * 60 * 1000
 const planKey = () => `hoy-plan-${new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)}`
+
+function getGreeting(firstName: string | null): string {
+  const h = new Date().getHours()
+  const name = firstName ? `, ${firstName}` : ''
+  if (h < 12) return `Buenos días${name}`
+  if (h < 20) return `Buenas tardes${name}`
+  return `Buenas noches${name}`
+}
+
+function getTurnoLabel(shift: ShiftInfo | null): { text: string; ok: boolean } {
+  if (!shift) return { text: 'Todavía no fichaste', ok: false }
+  if (shift.clock_out_at) return { text: 'Turno finalizado', ok: true }
+  const mins = Math.round((Date.now() - new Date(shift.clock_in_at).getTime()) / 60_000)
+  const hrs = Math.floor(mins / 60)
+  const rem = mins % 60
+  const tiempo = hrs > 0 ? `${hrs}h${rem > 0 ? ` ${rem}m` : ''}` : `${mins}m`
+  return { text: `${tiempo} en turno`, ok: true }
+}
 
 export default function HoyPage() {
   const { profile, loading: profileLoading } = useProfileContext()
   const [data, setData] = useState<HoyData | null>(null)
   const [loading, setLoading] = useState(true)
-  // Armador manual de producción: cantidades editables sobre la sugerencia
+  const [myShift, setMyShift] = useState<ShiftInfo | null>(null)
+  const [expiryLots, setExpiryLots] = useState<ExpiryLotBrief[]>([])
+  // Armador manual de producción
   const [planQty, setPlanQty] = useState<Record<string, number>>({})
   const [planLoaded, setPlanLoaded] = useState(false)
   const [sendingPlan, setSendingPlan] = useState(false)
@@ -66,7 +103,14 @@ export default function HoyPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showAiAdvice, setShowAiAdvice] = useState(false)
 
-  // Persistir cada ajuste del armador (sobrevive navegar a los pasos y volver)
+  const isManager = isManagerOrAbove(profile?.role)
+  const isKitchenOnly = isKitchenRole(profile?.role) && !isManager
+  const isBarista = profile?.role === 'barista'
+
+  // KPIs del día para encargados (silencioso si falla)
+  const { kpis } = useAdminKpis(!!profile && isManager)
+
+  // Persistir cada ajuste del armador
   useEffect(() => {
     if (!planLoaded) return
     try { localStorage.setItem(planKey(), JSON.stringify(planQty)) } catch { /* storage lleno */ }
@@ -76,7 +120,12 @@ export default function HoyPage() {
     if (!profile) return
     const supabase = createClient()
 
-    // 1) Si hay caché fresco, mostrarlo YA (volver de un paso = instantáneo)
+    // Consejo IA auto-visible para roles de cocina
+    if (isKitchenRole(profile.role) && !isManagerOrAbove(profile.role)) {
+      setShowAiAdvice(true)
+    }
+
+    // 1) Caché fresco → mostrar YA
     let hadCache = false
     try {
       const raw = sessionStorage.getItem(CACHE_KEY)
@@ -88,9 +137,9 @@ export default function HoyPage() {
           hadCache = true
         }
       }
-    } catch { /* caché inválido, se refetchea */ }
+    } catch { /* caché inválido */ }
 
-    // Restaurar el plan armado de hoy (si existe) apenas se pueda
+    // Restaurar plan armado de hoy
     let savedPlan: Record<string, number> | null = null
     try { savedPlan = JSON.parse(localStorage.getItem(planKey()) ?? 'null') } catch { /* ignorar */ }
     if (savedPlan && hadCache) {
@@ -99,14 +148,26 @@ export default function HoyPage() {
     }
 
     async function load() {
-      const [purchaseRes, planRes, kitchenRes, barRes, stockRes, conteoRes] = await Promise.all([
+      const today = fechaOperativa(new Date())
+
+      const [purchaseRes, planRes, kitchenRes, barRes, stockRes, conteoRes, shiftRes] = await Promise.all([
         fetch('/api/ai/purchase-order', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
         fetch('/api/ai/production-plan', { credentials: 'include' }).then(r => r.ok ? r.json() : null).catch(() => null),
         supabase.from('kitchen_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('bar_orders').select('id, product_name, quantity').eq('status', 'ordered').limit(10),
         supabase.from('stock_items').select('id, name, current_qty, min_qty, unit, is_produced').eq('is_active', true),
         fetch('/api/stock/conteo-diario', { credentials: 'include' }).then(r => r.ok ? r.json() : null).then(j => j?.estado ?? null).catch(() => null),
+        supabase
+          .from('attendance_logs')
+          .select('clock_in_at, clock_out_at, status')
+          .eq('user_id', profile.id)
+          .eq('operative_date', today)
+          .order('clock_in_at', { ascending: false })
+          .limit(1),
       ])
+
+      // Turno del usuario
+      if (shiftRes.data?.[0]) setMyShift(shiftRes.data[0] as ShiftInfo)
 
       const orders = (purchaseRes?.orders ?? []) as PurchaseOrderLite[]
       const stock = (stockRes.data ?? []) as { id: string; name: string; current_qty: number; min_qty: number; unit: string; is_produced: boolean }[]
@@ -128,7 +189,7 @@ export default function HoyPage() {
       setData(fresh)
       try { sessionStorage.setItem(CACHE_KEY, JSON.stringify({ data: fresh, ts: Date.now() })) } catch { /* storage lleno */ }
 
-      // Plan armado: lo guardado HOY manda; la IA solo completa lo que falte
+      // Plan armado
       const initialQty: Record<string, number> = {}
       for (const item of (planRes?.items ?? []) as PlanItem[]) initialQty[item.stock_item_id] = item.suggested_qty
       let saved: Record<string, number> | null = null
@@ -137,10 +198,24 @@ export default function HoyPage() {
       setPlanLoaded(true)
       setLoading(false)
     }
-    load()
-  }, [profile])
 
-  // --- Armador de producción: acciones manuales ---
+    // Lotes por vencer (solo cocina/chef — lo necesitan antes de producir)
+    async function loadExpiryLots() {
+      if (isManagerOrAbove(profile.role) || !isKitchenRole(profile.role)) return
+      try {
+        const res = await fetch('/api/stock/lots?window_days=3&limit=15')
+        const d = await res.json()
+        if (d.lots) setExpiryLots((d.lots as ExpiryLotBrief[]).filter(l => l.qty_remaining > 0))
+      } catch { /* silencioso */ }
+    }
+
+    load()
+    loadExpiryLots()
+  }, [profile]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------------------
+  // Armador de producción
+  // ---------------------------------------------------------------------------
 
   async function markAsBought(itemId: string, itemName: string) {
     const supabase = createClient()
@@ -193,15 +268,85 @@ export default function HoyPage() {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Guards
+  // ---------------------------------------------------------------------------
+
   if (profileLoading || (loading && !data)) return <LoadingState message="Armando tu día..." />
 
-  if (profile && !isManagerOrAbove(profile.role) && !['chef', 'cocina'].includes(profile.role)) {
+  const canSeeHoy = isManager || isKitchenRole(profile?.role) || isBarista
+  if (profile && !canSeeHoy) {
     return (
       <div className="mx-auto max-w-lg pb-28 pt-8 text-center">
-        <p className="text-sm font-medium text-[#3d2c24]">Esta vista es para encargados y cocina.</p>
+        <p className="text-sm font-medium text-[#3d2c24]">Esta vista es para encargados, cocina y barra.</p>
       </div>
     )
   }
+
+  // ---------------------------------------------------------------------------
+  // Greeting header (compartido por todas las vistas)
+  // ---------------------------------------------------------------------------
+
+  const turno = getTurnoLabel(myShift)
+
+  const GreetingHeader = (
+    <FadeIn>
+      <div className="flex items-start justify-between">
+        <div className="min-w-0">
+          <h1 className="font-display text-2xl font-bold leading-[1.05] tracking-tight text-[#3d2c24] sm:text-3xl">
+            {getGreeting(profile?.first_name ?? null)}
+          </h1>
+          <p className={`mt-1 flex items-center gap-1.5 text-sm font-medium ${turno.ok ? 'text-[#006d5a]' : 'text-[#d4943a]'}`}>
+            <Clock className="size-3.5" />
+            {turno.text}
+          </p>
+        </div>
+        {loading && <Loader2 className="size-4 animate-spin text-[#a39e97]" />}
+      </div>
+    </FadeIn>
+  )
+
+  // ---------------------------------------------------------------------------
+  // Vista barista
+  // ---------------------------------------------------------------------------
+
+  if (isBarista) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-4 pb-28">
+        {GreetingHeader}
+        <ActivarAvisos />
+        <ProtocolosHoy />
+        <FadeIn delay={0.03}>
+          <AskBar
+            scope="hoy"
+            placeholder="Preguntá lo que necesitás…"
+            examples={['¿qué tengo que contar?', '¿qué hay de protocolo hoy?', '¿qué falta en barra?']}
+          />
+        </FadeIn>
+        <FadeIn delay={0.05}>
+          <Link
+            href="/stock"
+            className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-4 ring-1 ring-[#ebe6df]"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#e8f5f1]">
+                <Package className="size-5 text-[#006d5a]" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[#3d2c24]">Conteo de barra</p>
+                <p className="text-xs text-[#a39e97]">Filtrá por área Barra en la pantalla de stock</p>
+              </div>
+            </div>
+            <ChevronRight className="size-4 shrink-0 text-[#d1cdc7]" />
+          </Link>
+        </FadeIn>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vista principal (encargado, chef, cocina)
+  // ---------------------------------------------------------------------------
 
   if (!data) return <LoadingState />
 
@@ -248,7 +393,7 @@ export default function HoyPage() {
           {data.incoming.length > 4 && <p className="text-[11px] text-[#a39e97]">+{data.incoming.length - 4} más en camino</p>}
         </div>
       ) : (
-        <p className="text-xs text-[#7d6c64]">Nada pendiente de recibir. Cuando llegue un pedido, confirmalo en Pedidos → En camino (la compra se carga una sola vez, en Fudo).</p>
+        <p className="text-xs text-[#7d6c64]">Nada pendiente de recibir. Cuando llegue un pedido, confirmalo en Pedidos → En camino.</p>
       ),
     },
     {
@@ -260,7 +405,6 @@ export default function HoyPage() {
       tone: (data.plan?.sellingWithoutStock.length ?? 0) > 0 ? 'urgent' : (data.plan?.items.length ?? 0) > 0 ? 'action' : 'ok',
       body: (() => {
         const suggestionById = new Map((data.plan?.items ?? []).map(i => [i.stock_item_id, i]))
-        // Filas visibles: lo sugerido por IA + lo agregado a mano (qty en planQty)
         const visibleIds = new Set<string>([
           ...(data.plan?.items ?? []).map(i => i.stock_item_id),
           ...Object.keys(planQty).filter(id => (planQty[id] ?? 0) > 0),
@@ -325,7 +469,6 @@ export default function HoyPage() {
               )
             })}
 
-            {/* Agregar cualquier producto propio a mano */}
             {showAdd ? (
               <div className="rounded-xl bg-white p-2 ring-1 ring-[#ebe6df]">
                 <input
@@ -410,6 +553,11 @@ export default function HoyPage() {
     },
   ] as const
 
+  // Chef/cocina solo ven Producir + Contar
+  const visibleSteps = isKitchenOnly
+    ? steps.filter(s => s.key === 'producir' || s.key === 'contar')
+    : steps
+
   const TONE_STYLES: Record<string, { ring: string; iconBg: string; iconColor: string; accent: string }> = {
     urgent: { ring: 'ring-[#f3d0cf]', iconBg: 'bg-[#fef2f2]', iconColor: 'text-[#ea504c]', accent: '#ea504c' },
     action: { ring: 'ring-[#f1dfba]', iconBg: 'bg-[#fdf6ec]', iconColor: 'text-[#d4943a]', accent: '#d4943a' },
@@ -418,35 +566,101 @@ export default function HoyPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 pb-28">
-      <FadeIn>
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="font-display text-3xl font-bold capitalize leading-[1.05] tracking-tight text-[#3d2c24]">
-              Hoy, {format(new Date(), "EEEE d 'de' MMMM", { locale: es })}
-            </h1>
-            <p className="section-label mt-1.5">Pedir → Recibir → Producir → Contar</p>
+      {GreetingHeader}
+
+      {/* Card de stock crítico — arriba de todo para que no se pueda ignorar */}
+      {isManager && <StockAlertaBanner />}
+
+      {/* Tira de KPIs operativos — solo encargados/socios */}
+      {isManager && kpis && (
+        <FadeIn delay={0.02}>
+          <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <Link
+              href="/admin/reportes/asistencia"
+              className="flex shrink-0 items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]"
+            >
+              <Users className="size-3.5 text-[#006d5a]" />
+              <span className="text-xs font-semibold tabular-nums text-[#3d2c24]">{kpis.team_present_today} presentes</span>
+              {kpis.missing_checkouts > 0 && (
+                <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 text-[10px] font-bold text-[#d4943a]">{kpis.missing_checkouts} sin egreso</span>
+              )}
+            </Link>
+            <Link
+              href="/admin/reportes/stock"
+              className="flex shrink-0 items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-[#ebe6df]"
+            >
+              <Package className={`size-3.5 ${kpis.stock_red > 0 ? 'text-[#ea504c]' : 'text-[#006d5a]'}`} />
+              <span className="text-xs font-semibold tabular-nums text-[#3d2c24]">
+                {kpis.stock_red > 0 ? `${kpis.stock_red} críticos` : 'Stock OK'}
+              </span>
+              {kpis.stock_yellow > 0 && (
+                <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 text-[10px] font-bold text-[#d4943a]">{kpis.stock_yellow} ámbar</span>
+              )}
+            </Link>
           </div>
-          {loading && <Loader2 className="size-4 animate-spin text-[#a39e97]" />}
-        </div>
-      </FadeIn>
+        </FadeIn>
+      )}
 
       <ActivarAvisos />
-
       <ProtocolosHoy />
 
-      {/* Preguntar en castellano — cruza stock, pedidos y producción */}
+      {/* AskBar con ejemplos según rol */}
       <FadeIn delay={0.03}>
         <AskBar
           scope="hoy"
           placeholder="Preguntá: qué comprar, qué falta…"
-          examples={['¿qué tengo que comprar?', '¿qué me falta en cocina?', '¿qué produje esta semana?']}
+          examples={
+            isKitchenOnly
+              ? ['¿qué elaborados quedan?', '¿cuánto produje esta semana?', '¿qué hay que reponer?']
+              : isBarista
+                ? ['¿qué tengo que contar?', '¿qué falta en barra?']
+                : ['¿qué tengo que comprar?', '¿qué me falta en cocina?', '¿qué produje esta semana?']
+          }
         />
       </FadeIn>
 
+      {/* Lotes por vencer — solo cocina/chef, antes de producir */}
+      {isKitchenOnly && expiryLots.length > 0 && (
+        <FadeIn delay={0.04}>
+          <div className="rounded-2xl bg-white ring-1 ring-[#f1dfba]">
+            <div className="flex items-center gap-2.5 px-4 py-2.5">
+              <AlertTriangle className="size-4 shrink-0 text-[#d4943a]" />
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#d4943a]">
+                Lotes por vencer — revisá antes de producir
+              </p>
+            </div>
+            <div className="divide-y border-t border-[#f3efe9]">
+              {expiryLots.map(lot => {
+                const tone = lotTone(lot.expires_in_days)
+                return (
+                  <div key={lot.id} className="flex items-center gap-2 px-4 py-2">
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.pill}`}>
+                      {formatLotCountdown(lot.expires_in_days)}
+                    </span>
+                    <p className="flex-1 truncate text-xs font-medium text-[#3d2c24]">{lot.stock_item_name}</p>
+                    <span className="shrink-0 text-[10px] text-[#a39e97]">
+                      {formatQty(lot.qty_remaining)} {lot.unit}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            <Link
+              href="/stock/lotes"
+              className="flex items-center justify-center gap-1 border-t border-[#f3efe9] px-4 py-2.5 text-[11px] font-semibold text-[#d4943a]"
+            >
+              Ver todos los lotes <ChevronRight className="size-3" />
+            </Link>
+          </div>
+        </FadeIn>
+      )}
+
+      {/* Steps */}
       <StaggerList className="space-y-3" staggerDelay={0.05}>
-        {steps.map((step, idx) => {
+        {visibleSteps.map((step, idx) => {
           const style = TONE_STYLES[step.tone]
           const Icon = step.icon
+          const stepNumber = idx + 1
           return (
             <StaggerItem key={step.key}>
               <div className={`relative overflow-hidden rounded-2xl bg-white p-4 pl-5 shadow-sm ring-1 ${style.ring}`}>
@@ -465,9 +679,9 @@ export default function HoyPage() {
                         className="flex size-4 items-center justify-center rounded-full text-[9px] font-bold text-white"
                         style={{ backgroundColor: style.accent }}
                       >
-                        {idx + 1}
+                        {stepNumber}
                       </span>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">Paso {idx + 1}</p>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#a39e97]">Paso {stepNumber}</p>
                     </div>
                     <p className="mt-0.5 font-display text-base font-bold text-[#3d2c24]">{step.title}</p>
                     <div className="mt-1.5">{step.body}</div>
@@ -486,7 +700,7 @@ export default function HoyPage() {
         })}
       </StaggerList>
 
-      {/* Consejo del plan IA — colapsado, opcional */}
+      {/* Consejo IA — auto-visible para cocina/chef, colapsado para encargados */}
       {data.plan?.analysis && data.plan.items.length > 0 && (
         <FadeIn>
           {showAiAdvice ? (
@@ -495,7 +709,7 @@ export default function HoyPage() {
                 <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-white/60">
                   <Sparkles className="size-3" /> Consejo IA de hoy
                 </p>
-                <span className="text-[10px] text-white/50">ocultar</span>
+                {isManager && <span className="text-[10px] text-white/50">ocultar</span>}
               </button>
               <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-white/90">{data.plan.analysis}</p>
             </div>

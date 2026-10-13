@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
@@ -13,14 +13,14 @@ import { errorToast } from '@/lib/toast-helpers'
 import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { mustClockIn } from '@/lib/roles'
+import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
 import { useMyAttendance, useAttendanceHistory } from '@/lib/hooks/use-attendance'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
 import { SuccessBurst } from '@/components/ui/success-burst'
 import { playSchoolBell } from '@/lib/sounds'
 import { getDeviceFingerprint, getNetworkInfo } from '@/lib/attendance/security'
 import { getCurrentPosition, calculateDistance } from '@/lib/attendance/geolocation'
-import { VENUE, VENUE_CONFIGURED } from '@/lib/attendance/venue'
+import { VENUE } from '@/lib/attendance/venue'
 import { logAuditClient } from '@/lib/audit'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +28,15 @@ import { cn } from '@/lib/utils'
 type TodayStatus = 'not_clocked_in' | 'clocked_in' | 'completed'
 type FlowState = 'idle' | 'working' | 'done'
 type GeoState = 'checking' | 'ok' | 'too_far' | 'denied' | 'unavailable' | 'no_venue'
+type Venue = { lat: number; lng: number; radiusM: number; name: string }
+type GeoFix = { lat: number; lng: number; accuracy?: number; at: number }
+
+// Una lectura del GPS de hace menos de esto se reusa al fichar (el chequeo
+// corre cada 30 s): pedir una nueva podía tardar 15 s adentro del local.
+const FIX_REUSE_MS = 60_000
+// Tope para la llamada al servidor: sin esto, con mala señal la pantalla
+// "Registrando fichaje" quedaba girando indefinidamente.
+const CLOCK_REQUEST_TIMEOUT_MS = 25_000
 
 // ---------------------------------------------------------------------------
 function getGreeting(d: Date) {
@@ -56,6 +65,38 @@ export default function MiTurnoPage() {
   // Geo state
   const [geoState, setGeoState] = useState<GeoState>('checking')
   const [geoDistance, setGeoDistance] = useState<number | null>(null)
+  // ¿Conectado al WiFi del local? Alcanza para fichar aunque el GPS falle.
+  const [redLocal, setRedLocal] = useState(false)
+  const [registrandoRed, setRegistrandoRed] = useState(false)
+  const checkRed = useCallback(async () => {
+    try {
+      const r = await fetch('/api/attendance/red-local', { cache: 'no-store' })
+      if (r.ok) setRedLocal(Boolean((await r.json())?.local))
+    } catch { /* sin red: queda el GPS */ }
+  }, [])
+  async function registrarRed() {
+    setRegistrandoRed(true)
+    try {
+      const r = await fetch('/api/attendance/red-local', { method: 'POST' })
+      const j = await r.json().catch(() => null)
+      if (!r.ok) throw new Error(j?.error ?? 'No se pudo registrar')
+      setRedLocal(true)
+      toast.success('Listo: desde este WiFi se ficha sin GPS')
+    } catch (e) {
+      errorToast('No se pudo registrar el WiFi', e)
+    } finally {
+      setRegistrandoRed(false)
+    }
+  }
+  // Misma ubicación y radio que valida el servidor (config del local en la
+  // base); las variables NEXT_PUBLIC_VENUE_* quedan solo como respaldo.
+  const [venue, setVenue] = useState<Venue>({ lat: VENUE.lat, lng: VENUE.lng, radiusM: VENUE.radiusM, name: VENUE.name })
+  // Hasta leer la config de la base no se sabe si falta la ubicación: el
+  // chequeo del GPS espera, así no aparece "Falta configurar" de pasada.
+  const [venueLeido, setVenueLeido] = useState(false)
+  const lastFix = useRef<GeoFix | null>(null)
+  const clockBusy = useRef(false)
+  const clockAbort = useRef<AbortController | null>(null)
 
   // SWR hooks
   const { record: todayRecord, isLoading: loadingToday, mutate: mutateToday } = useMyAttendance(profile?.id)
@@ -78,9 +119,28 @@ export default function MiTurnoPage() {
     return () => { stop(); document.removeEventListener('visibilitychange', onVisibility) }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/attendance/config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const loc = d?.config?.location as { lat?: unknown; lng?: unknown; radius_meters?: unknown; name?: unknown } | undefined
+        if (cancelled || typeof loc?.lat !== 'number' || typeof loc?.lng !== 'number' || typeof loc?.radius_meters !== 'number') return
+        setVenue({ lat: loc.lat, lng: loc.lng, radiusM: loc.radius_meters, name: typeof loc.name === 'string' ? loc.name : VENUE.name })
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setVenueLeido(true) })
+    return () => { cancelled = true }
+  }, [])
+
   // Geo check — runs on load and every 30s
   const checkGeo = useCallback(async () => {
-    if (!VENUE_CONFIGURED) {
+    // Mientras se ficha no se pide otra lectura: dos pedidos a la vez al GPS
+    // en algunos celulares dejan a uno sin respuesta.
+    if (clockBusy.current) return
+    // Sin ubicación del local (ni en la base ni en las variables) no hay a qué
+    // medir: solo se ficha desde el WiFi del local (el servidor responde 503).
+    if (!Number.isFinite(venue.lat) || !Number.isFinite(venue.lng)) {
       setGeoState('no_venue')
       return
     }
@@ -94,19 +154,21 @@ export default function MiTurnoPage() {
       setGeoState('unavailable')
       return
     }
-    const dist = calculateDistance(result.lat, result.lng, VENUE.lat, VENUE.lng)
+    lastFix.current = { lat: result.lat, lng: result.lng, accuracy: result.accuracy, at: Date.now() }
+    const dist = calculateDistance(result.lat, result.lng, venue.lat, venue.lng)
     setGeoDistance(dist)
     // Misma regla que el servidor: se descuenta el margen de error del GPS (hasta 100 m)
     const margen = Math.min(result.accuracy && result.accuracy > 0 ? result.accuracy : 0, 100)
-    setGeoState(Math.max(0, dist - margen) <= VENUE.radiusM ? 'ok' : 'too_far')
-  }, [])
+    setGeoState(Math.max(0, dist - margen) <= venue.radiusM ? 'ok' : 'too_far')
+  }, [venue])
 
   useEffect(() => {
-    if (!mustClockIn(profile ?? undefined)) return
+    if (!mustClockIn(profile ?? undefined) || !venueLeido) return
+    void checkRed()
     checkGeo()
     const interval = setInterval(checkGeo, 30_000)
     return () => clearInterval(interval)
-  }, [checkGeo, profile])
+  }, [checkGeo, checkRed, profile, venueLeido])
 
   // Status
   const status: TodayStatus = !todayRecord
@@ -125,13 +187,34 @@ export default function MiTurnoPage() {
   // Flujo de fichaje
   // ------------------------------------------
   async function handleClock(action: 'in' | 'out') {
+    if (clockBusy.current) return
+    clockBusy.current = true
     setFlowState('working')
     setFlowMsg('Obteniendo ubicación...')
 
-    // GPS — obligatorio
-    const geoResult = await getCurrentPosition()
-    if (geoResult.status !== 'success' || !geoResult.lat || !geoResult.lng) {
-      toast.error('No se pudo obtener tu ubicación. Activá el GPS e intentá de nuevo.')
+    // Se crea antes del GPS: "Cancelar" también corta si todavía se está
+    // buscando la ubicación (antes el fichaje seguía y se mandaba igual).
+    const controller = new AbortController()
+    clockAbort.current = controller
+    try {
+      await registrarFichaje(action, controller)
+    } finally {
+      clockBusy.current = false
+      clockAbort.current = null
+    }
+  }
+
+  async function registrarFichaje(action: 'in' | 'out', controller: AbortController) {
+    // GPS — obligatorio. Se reusa la lectura reciente del chequeo automático.
+    const reciente = lastFix.current && Date.now() - lastFix.current.at < FIX_REUSE_MS ? lastFix.current : null
+    const geoResult = reciente
+      ? { status: 'success' as const, lat: reciente.lat, lng: reciente.lng, accuracy: reciente.accuracy }
+      : await getCurrentPosition({ maximumAge: 30_000 })
+    if (controller.signal.aborted) return
+    const gpsOk = geoResult.status === 'success' && !!geoResult.lat && !!geoResult.lng
+    // En el WiFi del local se ficha igual sin GPS (el servidor lo verifica)
+    if (!gpsOk && !redLocal) {
+      toast.error('No se pudo obtener tu ubicación. Activá el GPS o conectate al WiFi del local.')
       setFlowState('idle')
       return
     }
@@ -144,20 +227,23 @@ export default function MiTurnoPage() {
 
     setFlowMsg('Registrando fichaje...')
 
+    const timer = setTimeout(() => controller.abort('timeout'), CLOCK_REQUEST_TIMEOUT_MS)
+
     try {
       const res = await fetch('/api/attendance/clock', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           event_type: action === 'in' ? 'clock_in' : 'clock_out',
-          gps_lat: geoResult.lat,
-          gps_lng: geoResult.lng,
-          gps_accuracy: geoResult.accuracy,
+          gps_lat: gpsOk ? geoResult.lat : null,
+          gps_lng: gpsOk ? geoResult.lng : null,
+          gps_accuracy: gpsOk ? geoResult.accuracy : null,
           device_fingerprint: dev.id,
         }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({ error: `El servidor respondió ${res.status}` }))
 
       if (!res.ok) {
         if (data.code === 'OUT_OF_RANGE') {
@@ -191,8 +277,19 @@ export default function MiTurnoPage() {
       mutateHistory()
       setTimeout(() => setFlowState('idle'), 2000)
     } catch (err) {
-      errorToast('Error de conexión', err, { retry: () => handleClock(action) })
+      if (controller.signal.aborted) {
+        // Pudo haberse registrado igual: se recarga el estado real
+        if (controller.signal.reason === 'timeout') {
+          toast.error('La conexión tardó demasiado. Fijate si quedó registrado; si no, probá de nuevo.')
+        }
+        mutateToday()
+        mutateHistory()
+      } else {
+        errorToast('Error de conexión', err, { retry: () => handleClock(action) })
+      }
       setFlowState('idle')
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -215,7 +312,7 @@ export default function MiTurnoPage() {
         <Loader2 className="size-10 animate-spin text-[#006d5a]" />
         <p className="text-sm text-[#a39e97]">{flowMsg}</p>
         <button
-          onClick={() => { setFlowState('idle'); toast.error('Fichaje cancelado') }}
+          onClick={() => { clockAbort.current?.abort('cancel'); setFlowState('idle'); toast.error('Fichaje cancelado') }}
           className="mt-4 rounded-xl border border-[#ebe6df] px-5 py-2 text-sm font-medium text-[#a39e97] hover:bg-[#faf8f5]"
         >
           Cancelar
@@ -242,17 +339,20 @@ export default function MiTurnoPage() {
   // ------------------------------------------
   // Geo status indicator config
   // ------------------------------------------
-  const geoBlocked = geoState === 'too_far' || geoState === 'denied' || geoState === 'no_venue'
+  // En el WiFi del local se ficha aunque el GPS falle o falte la ubicación
+  const geoBlocked = !redLocal && (geoState === 'too_far' || geoState === 'denied' || geoState === 'no_venue')
 
   const GEO_CONFIG = {
-    ok:          { icon: ShieldCheck, text: `En ${VENUE.name} ✓`,                 cls: 'bg-[#e8f5f1] text-[#006d5a]' },
+    ok:          { icon: ShieldCheck, text: `En ${venue.name} ✓`,                 cls: 'bg-[#e8f5f1] text-[#006d5a]' },
     checking:    { icon: Loader2,     text: 'Verificando ubicación...',            cls: 'bg-[#f8f5f0] text-[#a39e97]' },
     too_far:     { icon: MapPin,      text: geoDistance ? `Estás a ${geoDistance}m · Necesitás estar en el local` : 'Fuera del local', cls: 'bg-[#fef2f2] text-[#ea504c]' },
     denied:      { icon: ShieldAlert, text: 'Permiso de GPS denegado — activalo en ajustes', cls: 'bg-[#fef2f2] text-[#ea504c]' },
     unavailable: { icon: MapPin,      text: 'GPS no disponible',                  cls: 'bg-[#fdf6ec] text-[#d4943a]' },
     no_venue:    { icon: MapPin,      text: 'Falta configurar la ubicación del local', cls: 'bg-[#fdf6ec] text-[#d4943a]' },
   }
-  const geo = GEO_CONFIG[geoState]
+  const geo = redLocal
+    ? { icon: ShieldCheck, text: `En el WiFi de ${venue.name} ✓`, cls: 'bg-[#e8f5f1] text-[#006d5a]' }
+    : GEO_CONFIG[geoState]
   const GeoIcon = geo.icon
 
   // ------------------------------------------
@@ -278,12 +378,21 @@ export default function MiTurnoPage() {
             <GeoIcon className={cn('size-4 shrink-0', geoState === 'checking' && 'animate-spin')} />
             <span>{geo.text}</span>
           </div>
-          {(geoState === 'unavailable' || geoState === 'too_far') && (
-            <button onClick={checkGeo} className="shrink-0 rounded-lg p-1.5 hover:bg-black/5" aria-label="Reintentar">
+          {!redLocal && (geoState === 'unavailable' || geoState === 'too_far') && (
+            <button onClick={() => { void checkRed(); void checkGeo() }} className="shrink-0 rounded-lg p-1.5 hover:bg-black/5" aria-label="Reintentar">
               <RefreshCw className="size-3.5" />
             </button>
           )}
         </div>
+        {!redLocal && isManagerOrAbove(profile?.role) && (
+          <button
+            onClick={registrarRed}
+            disabled={registrandoRed}
+            className="mt-1.5 w-full text-center text-[11px] font-semibold text-[#7d6c64] underline disabled:opacity-50"
+          >
+            {registrandoRed ? 'Registrando…' : 'Estoy en el local: usar este WiFi para fichar sin GPS'}
+          </button>
+        )}
       </FadeIn>
 
       {/* Status Card */}

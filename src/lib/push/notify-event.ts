@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendPushToUser } from './send'
 import type { AppRole } from '@/types/database'
+import { idsConRolEnTurno } from '@/lib/turnos/rol-del-turno'
 
 // ---------------------------------------------------------------------------
 // Notificaciones push por evento — configurable por el administrador (socio)
@@ -79,7 +80,7 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     label: 'Problemas con Fudo',
     description: 'Cuando Fudo no responde hace más de 30 minutos (y cuando vuelve), o cuando algo lleva una hora sin poder entrar a Fudo.',
     enabled: true,
-    target_roles: ['socio'],
+    target_roles: ['socio', 'encargado'],
     target_user_ids: [],
   },
   conteo_diario_pendiente: {
@@ -87,6 +88,20 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     description: 'A las 23 hs, si todavía no se contó ningún elaborado en el día.',
     enabled: true,
     target_roles: ['socio', 'encargado', 'chef'],
+    target_user_ids: [],
+  },
+  stock_bajo_critico: {
+    label: 'Stock crítico — insumos que no alcanzan',
+    description: 'A las 7hs, 15hs y 23hs: avisa cuando un insumo activo tiene menos de 1.5 días de stock según el historial de ventas.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
+    target_user_ids: [],
+  },
+  faltante_reportado: {
+    label: 'Cocina reporta faltante de insumo',
+    description: 'Cuando alguien de cocina usa el botón "Reportar faltante" para avisar que se está terminando un insumo.',
+    enabled: true,
+    target_roles: ['socio', 'encargado'],
     target_user_ids: [],
   },
   sales_summary_daily: {
@@ -169,6 +184,9 @@ export async function notifyEvent(
       .in('role', cfg.target_roles)
       .eq('is_active', true)
     for (const p of profiles ?? []) targetIds.add(p.id)
+    // Y a quien trabaja ahora con ese rol según su turno (un runner que hoy
+    // hace de encargado recibe los avisos de encargado)
+    for (const id of await idsConRolEnTurno(admin, cfg.target_roles)) targetIds.add(id)
   }
 
   if (options?.excludeUserId) targetIds.delete(options.excludeUserId)

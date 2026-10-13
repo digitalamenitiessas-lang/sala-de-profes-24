@@ -1,5 +1,6 @@
 'use client'
 
+import { puestoDe } from '@/lib/roles'
 import { useState, useEffect } from 'react'
 import { Loader2, UserCog } from 'lucide-react'
 import { toast } from 'sonner'
@@ -43,7 +44,7 @@ export function EditUserDialog({ open, onOpenChange, user, onUpdated }: EditUser
 
   useEffect(() => {
     if (user) {
-      setRole(user.role)
+      setRole(puestoDe(user))
       setPhone(user.phone ?? '')
       setIsActive(user.is_active)
     }

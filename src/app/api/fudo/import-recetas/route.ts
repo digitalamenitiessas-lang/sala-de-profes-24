@@ -147,8 +147,8 @@ export async function POST(request: NextRequest) {
     .eq('id', user.id)
     .single()
 
-  if (!profile || profile.role !== 'socio') {
-    return NextResponse.json({ success: false, error: 'Sólo un socio puede importar recetas' }, { status: 403 })
+  if (!profile || (profile.role !== 'socio' && profile.role !== 'encargado')) {
+    return NextResponse.json({ success: false, error: 'Solo encargados pueden importar recetas' }, { status: 403 })
   }
 
   const userName = `${profile.first_name ?? ''} ${profile.last_name ?? ''}`.trim() || 'Socio'
@@ -544,28 +544,51 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // 3. Reemplazar ingredientes: borrar los viejos e insertar los del export
-  for (const batch of chunk(writtenIds, 200)) {
-    const { error } = await admin.from('recipe_ingredients').delete().in('recipe_id', batch)
-    if (error) errors.push(`Limpiando ingredientes: ${error.message}`)
+  // 3. Reemplazar ingredientes SIN perder los que había si algo falla.
+  //    (13/10: dos productos de Fudo con la misma receta en la app — ej. la
+  //    hamburguesa del salón y la de PedidosYa — repetían el mismo insumo, la
+  //    base rechazó la tanda entera y, como ya se habían borrado los
+  //    ingredientes, 310 recetas quedaron vacías.)
+  //    · Sin repetidos por (receta, insumo): gana el primero.
+  //    · Por tandas: se guarda lo que había, se borra, se inserta; si la tanda
+  //      falla, se vuelve a poner lo que había.
+  const vistos = new Set<string>()
+  const ingredientRows: { recipe_id: string; stock_item_id: string; qty_per_portion: number; ingredient_unit: string | null; notes: string | null }[] = []
+  let repetidos = 0
+  for (const p of written) {
+    for (const i of p.ingredients) {
+      const clave = `${p.recipeId}|${i.stockItemId}`
+      if (vistos.has(clave)) { repetidos++; continue }
+      vistos.add(clave)
+      ingredientRows.push({
+        recipe_id: p.recipeId as string,
+        stock_item_id: i.stockItemId,
+        qty_per_portion: i.qty,
+        ingredient_unit: i.unit,
+        notes: i.kind === 'subproducto' ? `Subproducto Fudo: ${i.sourceName}` : null,
+      })
+    }
   }
-
-  const ingredientRows = written.flatMap(p =>
-    p.ingredients.map(i => ({
-      recipe_id: p.recipeId as string,
-      stock_item_id: i.stockItemId,
-      qty_per_portion: i.qty,
-      ingredient_unit: i.unit,
-      notes: i.kind === 'subproducto' ? `Subproducto Fudo: ${i.sourceName}` : null,
-    })),
-  )
 
   let insertedIngredients = 0
-  for (const batch of chunk(ingredientRows, 500)) {
-    const { error } = await admin.from('recipe_ingredients').insert(batch)
-    if (error) errors.push(`Insertando ingredientes: ${error.message}`)
-    else insertedIngredients += batch.length
+  const recetasUnicas = [...new Set(writtenIds)]
+  for (const batch of chunk(recetasUnicas, 40)) {
+    const { data: antes, error: errAntes } = await admin.from('recipe_ingredients')
+      .select('recipe_id, stock_item_id, qty_per_portion, ingredient_unit, notes').in('recipe_id', batch)
+    if (errAntes) { errors.push(`Leyendo ingredientes actuales: ${errAntes.message}`); continue }
+    const nuevas = ingredientRows.filter((r) => batch.includes(r.recipe_id))
+    const { error: errDel } = await admin.from('recipe_ingredients').delete().in('recipe_id', batch)
+    if (errDel) { errors.push(`Limpiando ingredientes: ${errDel.message}`); continue }
+    if (nuevas.length === 0) continue
+    const { error: errIns } = await admin.from('recipe_ingredients').insert(nuevas)
+    if (!errIns) { insertedIngredients += nuevas.length; continue }
+    errors.push(`Insertando ingredientes (${batch.length} recetas quedaron como estaban): ${errIns.message}`)
+    if (antes?.length) {
+      const { error: errVuelta } = await admin.from('recipe_ingredients').insert(antes as typeof nuevas)
+      if (errVuelta) errors.push(`¡No se pudieron restaurar ${antes.length} ingredientes! ${errVuelta.message}`)
+    }
   }
+  if (repetidos > 0) console.warn(`[import-recetas] ${repetidos} ingredientes repetidos (misma receta e insumo) se cargaron una sola vez`)
 
   // 4. Vincular menu_items.recipe_id (sólo los que cambian)
   let menuLinked = 0

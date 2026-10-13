@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fudoHttp } from '@/lib/fudoClient'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon — Open tables with items and delay semaphore
@@ -17,9 +18,10 @@ export async function GET() {
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
     const admin = createAdminClient()
 
-    // Get open sales with items + table + product
+    // Solo las ventas abiertas (antes: las últimas 50 ventas, y en un día con
+    // mucho para llevar una mesa abierta temprano quedaba afuera)
     const res = await fudoHttp(
-      'https://api.fu.do/v1alpha1/sales?include=items.product,table&sort=-createdAt&page[size]=50',
+      'https://api.fu.do/v1alpha1/sales?filter[saleState]=in.(IN-COURSE,PENDING,PAYMENT-PROCESS)&include=items.product,table&sort=-createdAt&page[size]=100',
     )
     if (!res.ok) throw new Error(`Fudo API: ${res.status}`)
     const data = await res.json()
@@ -44,12 +46,24 @@ export async function GET() {
     }
 
     const now = new Date()
-    const today = now.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+    // Día operativo (corta a las 6): una mesa de las 23:30 sigue a las 00:30
+    const hoy = fechaOperativa(now)
+    type Venta = {
+      id: string
+      attributes: { saleState: string; saleType: string; total: number; createdAt: string; people: number | null }
+      relationships: { table?: { data?: { id: string } }; items?: { data?: { id: string }[] } }
+    }
+    const abiertas = ((data.data ?? []) as Venta[])
+      .filter((sale) => sale.attributes.saleState !== 'CLOSED' && fechaOperativa(new Date(sale.attributes.createdAt)) === hoy)
 
-    // Get all served items from our DB
-    const { data: servedItems } = await admin
+    // Lo marcado como servido, SOLO de estas ventas. Antes se leía la tabla
+    // entera y, pasadas las 1.000 filas, lo nuevo no llegaba: "Todo listo"
+    // se guardaba pero la mesa seguía pendiente.
+    const saleIds = abiertas.map((s) => String(s.id))
+    const { data: servedItems } = saleIds.length === 0 ? { data: [] } : await admin
       .from('salon_item_status')
       .select('fudo_sale_id, fudo_item_id, served_at')
+      .in('fudo_sale_id', saleIds)
 
     const servedSet = new Set((servedItems ?? []).map(s => `${s.fudo_sale_id}|${s.fudo_item_id}`))
     const servedTimeMap = new Map((servedItems ?? []).map(s => [`${s.fudo_sale_id}|${s.fudo_item_id}`, s.served_at]))
@@ -57,16 +71,7 @@ export async function GET() {
     // Build tables
     type SaleItem = { itemId: string; name: string; qty: number; price: number; createdAt: string; served: boolean; servedAt?: string; minutesPending: number }
 
-    const tables = ((data.data ?? []) as Array<{
-      id: string
-      attributes: { saleState: string; saleType: string; total: number; createdAt: string; people: number | null }
-      relationships: { table?: { data?: { id: string } }; items?: { data?: { id: string }[] } }
-    }>)
-      .filter(sale => {
-        if (sale.attributes.saleState === 'CLOSED') return false
-        const argDate = new Date(sale.attributes.createdAt).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
-        return argDate === today
-      })
+    const tables = abiertas
       .map(sale => {
         const tableRef = sale.relationships?.table?.data
         const table = tableRef ? tableMap.get(tableRef.id) : null
@@ -110,8 +115,17 @@ export async function GET() {
         else if (oldestPending > 15) semaphore = 'yellow'
         else semaphore = 'green'
 
+        // Hora del pedido que se está esperando (el más viejo sin servir); si
+        // está todo servido, la del último pedido. La de la venta es cuando se
+        // abrió la mesa, que no es lo mismo cuando piden una segunda vuelta.
+        const porHora = [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        const pedidoAt = (pendingItems.length > 0
+          ? [...pendingItems].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+          : porHora.at(-1))?.createdAt ?? sale.attributes.createdAt
+
         return {
           saleId: sale.id,
+          pedidoAt,
           tableNumber: table?.number ?? null,
           saleType: sale.attributes.saleType,
           state: sale.attributes.saleState,
@@ -157,13 +171,16 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminClient()
     const body = await request.json()
-    const { saleId, itemIds, allServed } = body
+    const { saleId, itemIds, allServed } = body as { saleId?: string; itemIds?: unknown; allServed?: boolean }
 
     if (!saleId) return NextResponse.json({ error: 'saleId requerido' }, { status: 400 })
 
     let idsToMark: string[] = []
 
-    if (allServed) {
+    // La pantalla manda los ids pendientes que ya tiene (no depende de Fudo)
+    if (Array.isArray(itemIds) && itemIds.length > 0) {
+      idsToMark = itemIds.map(String).slice(0, 100)
+    } else if (allServed) {
       // Get all items for this sale from Fudo
       const res = await fudoHttp(
         `https://api.fu.do/v1alpha1/sales/${saleId}?include=items`,
@@ -174,8 +191,6 @@ export async function POST(request: NextRequest) {
           .filter((i: { type: string; attributes?: { canceled?: boolean } }) => i.type === 'Item' && !i.attributes?.canceled)
           .map((i: { id: string }) => i.id)
       }
-    } else if (Array.isArray(itemIds)) {
-      idsToMark = itemIds
     }
 
     if (idsToMark.length === 0) {

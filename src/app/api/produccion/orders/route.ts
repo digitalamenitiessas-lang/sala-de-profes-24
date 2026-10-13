@@ -5,13 +5,13 @@ import { logAudit } from '@/lib/audit'
 import type { Database } from '@/types/database'
 
 type ProductionOrderStatus = Database['public']['Tables']['production_orders']['Row']['status']
-const PRODUCTION_STATUSES: ProductionOrderStatus[] = ['draft', 'in_progress', 'pending_review', 'completed', 'cancelled']
+const PRODUCTION_STATUSES: ProductionOrderStatus[] = ['draft', 'in_progress', 'pending_review', 'completed', 'cancelled', 'rejected']
 
 // ---------------------------------------------------------------------------
 // GET /api/produccion/orders
 // Lista órdenes de producción con resumen.
 // Query params:
-//   status  — 'draft'|'in_progress'|'completed'|'cancelled'|'all' (default: all)
+//   status  — 'draft'|'in_progress'|'pending_review'|'completed'|'cancelled'|'rejected'|'all' (default: all)
 //   chef_id — filtrar por chef
 //   days    — últimos N días (default: 30)
 //   parent  — 'only_root' (sin parent) | 'all' (default: all)
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       .from('production_orders')
       .select(`
         id, name, status, parent_order_id, template_id, chef_id,
-        notes, started_at, completed_at, submitted_at, reviewed_at, created_at, updated_at,
+        notes, started_at, completed_at, submitted_at, reviewed_at, review_notes, created_at, updated_at,
         production_templates(name),
         profiles!production_orders_chef_id_fkey(first_name, last_name, role)
       `)
@@ -146,6 +146,7 @@ export async function GET(request: NextRequest) {
         completed_at: o.completed_at,
         submitted_at: o.submitted_at ?? null,
         reviewed_at: o.reviewed_at ?? null,
+        review_notes: o.review_notes ?? null,
         created_at: o.created_at,
         updated_at: o.updated_at,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

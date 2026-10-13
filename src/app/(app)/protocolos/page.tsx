@@ -1,19 +1,20 @@
 'use client'
 
 import { useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import useSWR from 'swr'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
-import { Camera, Check, ChevronDown, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
+import { Camera, Check, ChevronDown, ClipboardList, Clock, Loader2, Settings2, Sparkles, UserPlus, X, AlertTriangle, Plus, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 
 // ---------------------------------------------------------------------------
 // Protocolos con horario — hoy: limpieza del baño, 4 veces por día
 // ---------------------------------------------------------------------------
-// Cada horario es una tarea: el encargado la asigna a alguien del turno (o a
-// sí mismo) y esa persona la cierra marcando todos los pasos + las fotos
+// Cada horario es una tarea: el encargado la asigna a alguien que esté en
+// turno a esa hora (o a sí mismo) y esa persona la cierra marcando todos los pasos + las fotos
 // (baño: una general y otra de la basura).
 // ---------------------------------------------------------------------------
 
@@ -22,14 +23,22 @@ type TareaUI = {
   id: string; fecha: string; hora: string; estado: 'pendiente' | 'asignada' | 'hecha'; visible: Visible
   asignado_a: string | null; asignado_nombre: string | null; hecho_nombre: string | null
   hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
+  candidatos: Candidato[]
+  medicion?: number | null
+  /** false si falta más de media hora para la hora de la tarea */
+  puede_cerrar?: boolean
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
+  medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null; roles?: string[] | null
+  /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
+  enlace_url?: string | null; enlace_texto?: string | null
   tareas: TareaUI[]
   historial: { fecha: string; hechas: number; total: number; tareas: TareaUI[] }[]
 }
-type Persona = { id: string; nombre: string; role: string; presente: boolean }
-type Datos = { hoy: string; protocolos: ProtocoloUI[]; personal: Persona[]; equipo: Persona[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean } }
+/** Quien está en turno a la hora de la tarea, con el rol de ese turno */
+type Candidato = { id: string; nombre: string; role: string; presente: boolean; turno: string | null }
+type Datos = { hoy: string; protocolos: ProtocoloUI[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean } }
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -46,20 +55,21 @@ const CHIP: Record<Visible, { txt: string; cls: string }> = {
   hecha_tarde: { txt: 'Hecha tarde', cls: 'bg-[#fdf6ec] text-[#b0762a]' },
 }
 
-const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', chef: 'Chef', cocina: 'Cocina', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
+const ROL: Record<string, string> = { socio: 'Socio', encargado: 'Encargado', cajero: 'Cajero', chef: 'Chef', cocina: 'Cocina', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
 const hhmm = (iso: string) => format(new Date(iso), 'HH:mm')
 const urlsDe = (t: TareaUI) => (t.fotos_urls?.length ? t.fotos_urls : t.foto_url ? [t.foto_url] : [])
 
-/** Achica la foto en el celular antes de subirla (máx. 1600 px, JPEG). */
+/** Achica la foto en el celular antes de subirla (máx. 1024 px, JPEG): sube rápido con datos.
+ *  El servidor la vuelve a optimizar igual (lib/protocolos/fotos.ts). */
 async function comprimir(file: File): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(file)
-    const k = Math.min(1, 1600 / Math.max(bmp.width, bmp.height))
+    const k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height))
     const c = document.createElement('canvas')
     c.width = Math.round(bmp.width * k)
     c.height = Math.round(bmp.height * k)
     c.getContext('2d')!.drawImage(bmp, 0, 0, c.width, c.height)
-    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.8))
+    const blob = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.7))
     return blob ?? file
   } catch {
     return file
@@ -99,8 +109,6 @@ export default function ProtocolosPage() {
         <AsignarDialog
           tarea={asignando.t}
           protocolo={asignando.p}
-          personal={data.personal}
-          equipo={data.equipo}
           yoId={data.yo.id}
           onClose={() => setAsignando(null)}
           onDone={() => { setAsignando(null); void mutate() }}
@@ -151,12 +159,16 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
         )}
       </div>
 
+      {p.enlace_url && p.tareas.some((t) => t.estado !== 'hecha' && t.visible !== 'programada') && (
+        <EnlaceCarga p={p} className="mt-3" />
+      )}
+
       <ul className="mt-3 space-y-2">
         {p.tareas.map((t) => {
           const chip = CHIP[t.visible]
           const mia = t.asignado_a === yo.id
           const hecha = t.estado === 'hecha'
-          const puedeCompletar = !hecha && (mia || yo.puede_asignar) && t.visible !== 'programada'
+          const puedeCompletar = !hecha && (mia || yo.puede_asignar) && t.visible !== 'programada' && t.puede_cerrar !== false
           return (
             <li key={t.id} className={cn('rounded-xl p-3 ring-1', t.visible === 'atrasada' ? 'bg-[#fffafa] ring-[#f3d0cf]' : mia && !hecha ? 'bg-[#f7faff] ring-[#cfdcf3]' : 'bg-[#fcfbf9] ring-[#f0ebe4]')}>
               <div className="flex items-center gap-3">
@@ -168,7 +180,7 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
                   <span className={cn('inline-block rounded-full px-2 py-0.5 text-[11px] font-semibold', chip.cls)}>{chip.txt}</span>
                   <p className="mt-1 truncate text-[12.5px] text-[#5c4a42]">
                     {hecha
-                      ? <>{t.hecho_nombre ?? 'Alguien'} · {t.hecho_at ? hhmm(t.hecho_at) : ''}</>
+                      ? <>{t.hecho_nombre ?? 'Alguien'} · {t.hecho_at ? hhmm(t.hecho_at) : ''}{t.medicion != null && <> · <b>{Number(t.medicion).toLocaleString('es-AR')} {p.medicion_unidad ?? ''}</b></>}</>
                       : t.asignado_nombre ? <>Le toca a <b>{mia ? 'vos' : t.asignado_nombre}</b></> : t.visible === 'programada' ? 'Todavía no es la hora' : 'Nadie asignado'}
                   </p>
                   {hecha && t.nota && <p className="mt-0.5 text-[11.5px] italic text-[#7d6c64]">“{t.nota}”</p>}
@@ -233,18 +245,17 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
   )
 }
 
-function AsignarDialog({ tarea, protocolo, personal, equipo, yoId, onClose, onDone }: {
-  tarea: TareaUI; protocolo: ProtocoloUI; personal: Persona[]; equipo: Persona[]; yoId: string; onClose: () => void; onDone: () => void
+function AsignarDialog({ tarea, protocolo, yoId, onClose, onDone }: {
+  tarea: TareaUI; protocolo: ProtocoloUI; yoId: string; onClose: () => void; onDone: () => void
 }) {
   const [enviando, setEnviando] = useState<string | null>(null)
-  const [verTodos, setVerTodos] = useState(personal.length === 0)
-  // Yo primero, después los presentes, después el resto con turno hoy
+  // Yo primero, después los fichados, después el resto con turno a esa hora
   const lista = useMemo(() => {
-    const yo = personal.find((p) => p.id === yoId)
-    return [...(yo ? [yo] : []), ...personal.filter((p) => p.id !== yoId)]
-  }, [personal, yoId])
+    const yo = tarea.candidatos.find((p) => p.id === yoId)
+    return [...(yo ? [yo] : []), ...tarea.candidatos.filter((p) => p.id !== yoId)]
+  }, [tarea.candidatos, yoId])
 
-  async function asignar(p: Persona) {
+  async function asignar(p: Candidato) {
     setEnviando(p.id)
     try {
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accion: 'asignar', user_id: p.id }) })
@@ -262,36 +273,39 @@ function AsignarDialog({ tarea, protocolo, personal, equipo, yoId, onClose, onDo
     <Dialog open onOpenChange={(o) => { if (!o) onClose() }}>
       <DialogContent className="max-h-[85svh] overflow-y-auto">
         <DialogHeader><DialogTitle>{protocolo.nombre} · {tarea.hora}</DialogTitle></DialogHeader>
-        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">¿Quién lo hace? Arriba están los que están fichados ahora.</p>
-        {personal.length === 0 && <p className="rounded-lg bg-[#fdf6ec] px-3 py-2 text-[12px] text-[#b0762a]">No hay nadie fichado ni con turno cargado hoy: elegí del equipo.</p>}
+        <p className="-mt-2 text-[12.5px] text-[#7d6c64]">¿Quién lo hace? Solo aparecen los que están en turno a esa hora.</p>
+        {lista.length === 0 && (
+          <p className="rounded-lg bg-[#fdf6ec] px-3 py-2 text-[12px] text-[#b0762a]">
+            No hay nadie con turno{protocolo.roles?.length ? ` de ${protocolo.roles.join(' o ')}` : ''} a las {tarea.hora}. Cargá el turno en Equipo → Turnos para poder asignarla.
+          </p>
+        )}
         <ul className="space-y-1.5">
-          {[...lista, ...(verTodos ? equipo.filter((p) => p.id !== yoId) : [])].map((p) => (
+          {lista.map((p) => (
             <li key={p.id}>
               <button disabled={!!enviando} onClick={() => void asignar(p)} className={cn('flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left ring-1 ring-[#ebe6df] disabled:opacity-60', tarea.asignado_a === p.id ? 'bg-[#eef3fb]' : 'bg-white hover:bg-[#fcfbf9]')}>
                 <span className={cn('size-2 shrink-0 rounded-full', p.presente ? 'bg-[#16a34a]' : 'bg-[#d6d0c8]')} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-semibold text-[#3d2c24]">{p.id === yoId ? `Yo (${p.nombre.split(' ')[0]})` : p.nombre}</span>
-                  <span className="block text-[11.5px] text-[#7d6c64]">{ROL[p.role] ?? p.role} · {p.presente ? 'fichado ahora' : personal.some((x) => x.id === p.id) ? 'tiene turno hoy' : 'sin turno hoy'}</span>
+                  <span className="block text-[11.5px] text-[#7d6c64]">
+                    {ROL[p.role] ?? p.role}{p.turno ? ` · turno ${p.turno}` : ''}{p.presente ? ' · fichado ahora' : ''}
+                  </span>
                 </span>
                 {enviando === p.id ? <Loader2 className="size-4 animate-spin text-[#a39e97]" /> : tarea.asignado_a === p.id ? <Check className="size-4 text-[#3b6ab5]" /> : null}
               </button>
             </li>
           ))}
-          {!verTodos && equipo.length > 0 && (
-            <li>
-              <button onClick={() => setVerTodos(true)} className="w-full py-2 text-center text-[12.5px] font-semibold text-[#7d6c64]">Ver resto del equipo ({equipo.length})</button>
-            </li>
-          )}
-          {!lista.some((p) => p.id === yoId) && (
-            <li>
-              <button disabled={!!enviando} onClick={() => void asignar({ id: yoId, nombre: 'Yo', role: '', presente: false })} className="flex w-full items-center gap-3 rounded-xl bg-white px-3 py-2.5 text-left text-[13.5px] font-semibold text-[#3d2c24] ring-1 ring-[#ebe6df]">
-                <UserPlus className="size-4 text-[#7d6c64]" /> Lo hago yo
-              </button>
-            </li>
-          )}
         </ul>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function EnlaceCarga({ p, className }: { p: ProtocoloUI; className?: string }) {
+  if (!p.enlace_url) return null
+  return (
+    <Link href={p.enlace_url} className={cn('flex items-center justify-center gap-2 rounded-xl bg-[#006d5a] px-3 py-2.5 text-[13.5px] font-bold text-white', className)}>
+      <ClipboardList className="size-4" /> {p.enlace_texto || 'Cargar'}
+    </Link>
   )
 }
 
@@ -300,10 +314,13 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
   const etiquetas = protocolo.requiere_foto ? (protocolo.fotos?.length ? protocolo.fotos : ['Foto']) : []
   const [fotos, setFotos] = useState<(Blob | null)[]>(() => etiquetas.map(() => null))
   const [nota, setNota] = useState('')
+  const [medicion, setMedicion] = useState('')
   const [enviando, setEnviando] = useState(false)
   const todos = protocolo.pasos.every((p) => ok.has(p))
   const faltaFoto = etiquetas.find((_, i) => !fotos[i])
-  const puede = todos && !faltaFoto && !enviando
+  const pideMedicion = !!protocolo.medicion_etiqueta
+  const faltaMedicion = pideMedicion && !(medicion.trim() !== '' && Number(medicion.replace(',', '.')) >= 0)
+  const puede = todos && !faltaFoto && !faltaMedicion && !enviando
 
   async function enviar() {
     setEnviando(true)
@@ -312,11 +329,12 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       fd.set('accion', 'completar')
       fd.set('pasos', JSON.stringify(protocolo.pasos.filter((p) => ok.has(p))))
       fd.set('nota', nota)
+      if (pideMedicion) fd.set('medicion', medicion.replace(',', '.'))
       fotos.forEach((f, i) => { if (f) fd.set(`foto_${i}`, f, `foto-${i + 1}.jpg`) })
       const r = await fetch(`/api/protocolos/tareas/${tarea.id}`, { method: 'POST', body: fd })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo registrar')
-      toast.success(etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
+      toast.success(j?.enTolva ? `¡Listo! El peso quedó en Tolva (${j.enTolva})` : etiquetas.length > 1 ? '¡Listo! Quedó registrado con las fotos' : '¡Listo! Quedó registrado')
       onDone()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'No se pudo registrar')
@@ -329,6 +347,12 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
       <DialogContent className="max-h-[90svh] overflow-y-auto">
         <DialogHeader><DialogTitle>{protocolo.nombre} · {tarea.hora}</DialogTitle></DialogHeader>
         <p className="-mt-2 text-[12.5px] text-[#7d6c64]">Marcá cada paso{etiquetas.length === 1 ? ' y sacá la foto' : etiquetas.length > 1 ? ` y sacá las ${etiquetas.length} fotos` : ''}. Sin todo completo no se puede cerrar.</p>
+        {protocolo.enlace_url && (
+          <div className="rounded-xl bg-[#e8f5f1] p-3 text-[12.5px] text-[#004d40]">
+            <p className="mb-2">{protocolo.registro === 'conteo_elaborados' ? <>Primero cargá <b>cuánto hay de cada elaborado</b> y guardalo. Después volvé acá y cerrá la tarea.</> : protocolo.registro === 'conteo_descartables' ? <>Primero cargá <b>cuántos vasos hay de cada tamaño</b> y guardá. Después volvé acá y cerrá la tarea.</> : 'Primero cargalo acá:'}</p>
+            <EnlaceCarga p={protocolo} />
+          </div>
+        )}
 
         <ul className="space-y-1.5">
           {protocolo.pasos.map((p) => {
@@ -347,6 +371,20 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           })}
         </ul>
 
+        {pideMedicion && (
+          <label className="block">
+            <span className="mb-1 block text-[12.5px] font-semibold text-[#3d2c24]">{protocolo.medicion_etiqueta}</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" inputMode="decimal" min={0} value={medicion} onChange={(e) => setMedicion(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-[#ebe6df] px-3 py-2.5 text-[16px] font-semibold tabular-nums outline-none focus:border-[#d4943a]"
+              />
+              {protocolo.medicion_unidad && <span className="text-sm font-semibold text-[#7d6c64]">{protocolo.medicion_unidad}</span>}
+            </div>
+          </label>
+        )}
+
         {etiquetas.length > 0 && (
           <div className={cn('grid gap-2', etiquetas.length > 1 && 'grid-cols-2')}>
             {etiquetas.map((e, i) => (
@@ -355,12 +393,12 @@ function CompletarDialog({ tarea, protocolo, onClose, onDone }: { tarea: TareaUI
           </div>
         )}
 
-        <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} rows={2} placeholder="Algo para avisar (opcional): falta papel, pérdida en el inodoro…" className="w-full rounded-xl border border-[#ebe6df] px-3 py-2 text-[13px] outline-none focus:border-[#d4943a]" />
+        <textarea value={nota} onChange={(e) => setNota(e.target.value)} maxLength={500} rows={2} placeholder={protocolo.registro === 'conteo_elaborados' ? 'Lo que falta producir (les llega a los encargados)' : 'Algo para avisar (opcional, les llega a los encargados): falta papel, pérdida en el inodoro…'} className="w-full rounded-xl border border-[#ebe6df] px-3 py-2 text-[13px] outline-none focus:border-[#d4943a]" />
 
         <DialogFooter>
           <button onClick={() => void enviar()} disabled={!puede} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#006d5a] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
+            {!todos ? (protocolo.pasos.length - ok.size === 1 ? 'Falta 1 paso' : `Faltan ${protocolo.pasos.length - ok.size} pasos`) : faltaMedicion ? `Falta: ${(protocolo.medicion_etiqueta ?? '').toLowerCase()}` : faltaFoto ? `Falta: ${faltaFoto.split(' (')[0].toLowerCase()}` : 'Registrar'}
           </button>
         </DialogFooter>
       </DialogContent>

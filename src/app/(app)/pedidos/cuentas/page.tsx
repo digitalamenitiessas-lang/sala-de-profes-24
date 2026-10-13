@@ -10,13 +10,15 @@ import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
   ArrowLeft, Wallet, ChevronDown, ChevronUp, Check,
-  Loader2, Package, AlertTriangle, X,
+  Loader2, Package, AlertTriangle, X, Phone, Pencil,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
+import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
+import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
 
 type Receipt = {
   id: number
@@ -30,6 +32,8 @@ type Receipt = {
   paid_at: string | null
   payment_method: string | null
   supplier_name: string
+  supplier_phone: string | null
+  supplier_contact: string | null
 }
 
 type PayState = { id: number; method: 'efectivo' | 'transferencia' | 'tarjeta' | null }
@@ -62,6 +66,9 @@ export default function CuentasPage() {
   const [payingAll, setPayingAll] = useState<string | null>(null)
   const [undoing, setUndoing] = useState<number | null>(null)
   const [showPaid, setShowPaid] = useState(false)
+  const [editState, setEditState] = useState<{ id: number; costTotal: string; note: string } | null>(null)
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [canceladosFudo, setCanceladosFudo] = useState<CanceladoEnFudo[]>([])
 
   const canManage = isManagerOrAbove(profile?.role)
 
@@ -70,8 +77,9 @@ export default function CuentasPage() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from('stock_receipts')
-      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers:supplier_id(name)')
-      .not('cost_total', 'is', null)
+      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)')
+      // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
+      // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
       .order('received_date', { ascending: false })
       .limit(300)
 
@@ -81,30 +89,66 @@ export default function CuentasPage() {
       return
     }
 
-    setReceipts(((data ?? []) as unknown as (Omit<Receipt, 'supplier_name'> & { suppliers: { name: string } | null })[])
-      .map((r) => ({ ...r, supplier_name: r.suppliers?.name ?? 'Sin proveedor' })))
+    setReceipts(((data ?? []) as unknown as (Omit<Receipt, 'supplier_name' | 'supplier_phone' | 'supplier_contact'> & { suppliers: { name: string; phone: string | null; contact_name: string | null } | null })[])
+      .map((r) => ({
+        ...r,
+        supplier_name: r.suppliers?.name ?? 'Sin proveedor',
+        supplier_phone: r.suppliers?.phone ?? null,
+        supplier_contact: r.suppliers?.contact_name ?? null,
+      })))
     setLoading(false)
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar'), [receipts])
-  const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado').slice(0, 15), [receipts])
+  // Lo que ya se pagó en Fudo (orden de pago a proveedores) se marca pagado acá
+  useEffect(() => {
+    if (!canManage) return
+    let alive = true
+    fetch('/api/compras/pagos-fudo', { method: 'POST' })
+      .then((r) => (r.ok ? r.json() as Promise<ResultadoPagosFudo> : null))
+      .then((r) => {
+        if (!alive || !r) return
+        setCanceladosFudo(r.cancelados ?? [])
+        if (r.recibosPagados > 0) {
+          toast.success(`${r.recibosPagados} recibo${r.recibosPagados !== 1 ? 's' : ''} ya pagado${r.recibosPagados !== 1 ? 's' : ''} en Fudo: marcado${r.recibosPagados !== 1 ? 's' : ''} como pagado${r.recibosPagados !== 1 ? 's' : ''}`)
+          void fetchData()
+        }
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [canManage, fetchData])
+
+  const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && !faltaPrecio(r.cost_total)), [receipts])
+  // Cuenta corriente que llegó sin monto: aparte, sin sumar al saldo en $
+  const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total)), [receipts])
+  const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado' && r.cost_total != null).slice(0, 15), [receipts])
   const totalPending = useMemo(() => pending.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0), [pending])
 
   const groups = useMemo(() => {
-    const map = new Map<string, { name: string; receipts: Receipt[]; total: number }>()
+    const map = new Map<string, { name: string; phone: string | null; contact: string | null; receipts: Receipt[]; total: number; oldestDate: string }>()
     for (const r of pending) {
       const key = r.supplier_id ?? 'none'
-      const g = map.get(key) ?? { name: r.supplier_name, receipts: [], total: 0 }
+      const g = map.get(key) ?? { name: r.supplier_name, phone: r.supplier_phone, contact: r.supplier_contact, receipts: [], total: 0, oldestDate: r.received_date }
       g.receipts.push(r)
       g.total += Number(r.cost_total) || 0
+      if (r.received_date < g.oldestDate) g.oldestDate = r.received_date
       map.set(key, g)
     }
     return Array.from(map.entries())
       .map(([key, g]) => ({ key, ...g }))
       .sort((a, b) => b.total - a.total)
   }, [pending])
+
+  function diasDesde(dateStr: string): number {
+    return Math.floor((Date.now() - new Date(`${dateStr}T12:00:00`).getTime()) / 86_400_000)
+  }
+
+  function labelDias(d: number): string {
+    if (d === 0) return 'Hoy'
+    if (d === 1) return 'Hace 1 día'
+    return `Hace ${d} días`
+  }
 
   /** PATCH de estado de pago. Devuelve el json (fudoSynced / fudoPaymentLinked). */
   async function patchStatus(receiptId: number, status: 'pagado' | 'a_pagar', method?: 'efectivo' | 'transferencia' | 'tarjeta') {
@@ -152,11 +196,33 @@ export default function CuentasPage() {
     }
   }
 
+  async function saveEdit() {
+    if (!editState) return
+    setSavingEdit(true)
+    try {
+      const cost = parseFloat(editState.costTotal.replace(',', '.'))
+      const res = await fetch(`/api/stock/receipts/${editState.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(Number.isFinite(cost) && cost > 0 ? { cost_total: cost } : {}),
+          note: editState.note.trim() || null,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Error al guardar')
+      toast.success('Recibo actualizado')
+      setEditState(null)
+      fetchData()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
   /** Salda TODOS los recibos pendientes de un proveedor con UN medio de pago. */
-  async function saldarTodo(group: { key: string; name: string; receipts: Receipt[]; total: number }, method: 'efectivo' | 'transferencia' | 'tarjeta') {
-    const n = group.receipts.length
-    const ok = window.confirm(`¿Marcar como pagados (${methodLabel(method)}) los ${n} recibo${n > 1 ? 's' : ''} de ${group.name} por ${fmtMoney(group.total)}?`)
-    if (!ok) return
+  async function saldarTodo(group: { key: string; name: string; phone: string | null; contact: string | null; receipts: Receipt[]; total: number; oldestDate: string }, method: 'efectivo' | 'transferencia' | 'tarjeta') {
     setPayingAll(group.key)
     let saldados = 0
     let fallidos = 0
@@ -213,6 +279,20 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
+      {canceladosFudo.length > 0 && (
+        <FadeIn>
+          <div className="rounded-2xl bg-[#fef2f2] px-4 py-3 ring-1 ring-[#ea504c]/20">
+            <p className="text-sm font-semibold text-[#ea504c]">Cancelados en Fudo, pendientes acá</p>
+            <p className="mt-0.5 text-xs text-[#7d6c64]">Revisá si hay que anular la compra en Sala de Profes o si el gasto se canceló por error en Fudo.</p>
+            <ul className="mt-1.5 space-y-0.5 text-xs text-[#3d2c24]">
+              {canceladosFudo.map((c) => (
+                <li key={c.expenseId}>· {c.proveedor ?? 'Sin proveedor'} — {fmtMoney(c.total)} <span className="text-[#a39e97]">(gasto #{c.expenseId} en Fudo)</span></li>
+              ))}
+            </ul>
+          </div>
+        </FadeIn>
+      )}
+
       {!migrationMissing && (
         <FadeIn delay={0.05}>
           <div className="rounded-2xl bg-white p-4 ring-1 ring-[#ebe6df]">
@@ -229,12 +309,25 @@ export default function CuentasPage() {
                 <p className="text-[9px] font-semibold uppercase tracking-wider text-[#a39e97]">recibos</p>
               </div>
             </div>
+            {sinPrecio.length > 0 && (
+              <p className="mt-2 text-[11px] font-semibold text-[#d4943a]">
+                + {sinPrecio.length} recibo{sinPrecio.length !== 1 ? 's' : ''} sin precio (no sumado{sinPrecio.length !== 1 ? 's' : ''} al saldo)
+              </p>
+            )}
           </div>
+        </FadeIn>
+      )}
+
+      {!migrationMissing && sinPrecio.length > 0 && (
+        <FadeIn>
+          <SinPrecioSection recibos={sinPrecio} onSaved={() => void fetchData()} />
         </FadeIn>
       )}
 
       {!migrationMissing && groups.map((group) => {
         const isExpanded = expanded === group.key
+        const dias = diasDesde(group.oldestDate)
+        const urgente = dias >= 14
         return (
           <FadeIn key={group.key}>
             <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
@@ -242,13 +335,25 @@ export default function CuentasPage() {
                 onClick={() => setExpanded(isExpanded ? null : group.key)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left"
               >
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#e8f5f1]">
-                  <Package className="size-4 text-[#006d5a]" />
+                <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-full', urgente ? 'bg-[#fdf6ec]' : 'bg-[#e8f5f1]')}>
+                  <Package className={cn('size-4', urgente ? 'text-[#d4943a]' : 'text-[#006d5a]')} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold text-[#3d2c24]">{group.name}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="truncate text-sm font-semibold text-[#3d2c24]">{group.name}</p>
+                    {group.phone && (
+                      <a
+                        href={`tel:${group.phone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0 rounded-full p-1 text-[#a39e97] hover:bg-[#faf8f5] hover:text-[#006d5a]"
+                        title={group.contact ? `${group.contact} — ${group.phone}` : group.phone}
+                      >
+                        <Phone className="size-3.5" />
+                      </a>
+                    )}
+                  </div>
                   <p className="text-[11px] text-[#a39e97]">
-                    {group.receipts.length} recibo{group.receipts.length > 1 ? 's' : ''} pendiente{group.receipts.length > 1 ? 's' : ''}
+                    {group.receipts.length} recibo{group.receipts.length > 1 ? 's' : ''} · <span className={urgente ? 'font-semibold text-[#d4943a]' : ''}>{labelDias(dias)}</span>
                   </p>
                 </div>
                 <span className="shrink-0 text-sm font-bold tabular-nums text-[#d4943a]">{fmtMoney(group.total)}</span>
@@ -333,7 +438,16 @@ export default function CuentasPage() {
                           <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
                             {fmtMoney(Number(r.cost_total) || 0)}
                           </span>
-                          {!isPaying && (
+                          {!isPaying && editState?.id !== r.id && (
+                            <button
+                              onClick={() => setEditState({ id: r.id, costTotal: String(r.cost_total ?? ''), note: r.note ?? '' })}
+                              className="flex shrink-0 items-center justify-center rounded-lg border border-[#ebe6df] p-1.5 text-[#a39e97] hover:bg-[#faf8f5]"
+                              title="Editar monto o nota"
+                            >
+                              <Pencil className="size-3.5" />
+                            </button>
+                          )}
+                          {!isPaying && editState?.id !== r.id && (
                             <button
                               onClick={() => setPayState({ id: r.id, method: null })}
                               className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95"
@@ -342,9 +456,9 @@ export default function CuentasPage() {
                               Pagar
                             </button>
                           )}
-                          {isPaying && (
+                          {(isPaying || editState?.id === r.id) && (
                             <button
-                              onClick={() => setPayState(null)}
+                              onClick={() => { setPayState(null); setEditState(null) }}
                               className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]"
                             >
                               <X className="size-3.5" />
@@ -384,6 +498,47 @@ export default function CuentasPage() {
                             </div>
                           </div>
                         )}
+                        {editState?.id === r.id && (
+                          <div className="mt-2 border-t border-[#f5f0ea] pt-2 space-y-1.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">Editar recibo</p>
+                            <div className="grid gap-1.5 sm:grid-cols-2">
+                              <label className="block">
+                                <span className="text-[10px] font-semibold text-[#7d6c64]">Monto ($)</span>
+                                <input
+                                  type="number"
+                                  value={editState.costTotal}
+                                  onChange={(e) => setEditState((es) => es ? { ...es, costTotal: e.target.value } : null)}
+                                  className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-xs focus:border-[#006d5a] focus:outline-none"
+                                />
+                              </label>
+                              <label className="block">
+                                <span className="text-[10px] font-semibold text-[#7d6c64]">Nota</span>
+                                <input
+                                  value={editState.note}
+                                  onChange={(e) => setEditState((es) => es ? { ...es, note: e.target.value } : null)}
+                                  placeholder="Opcional"
+                                  className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-xs focus:border-[#006d5a] focus:outline-none"
+                                />
+                              </label>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => void saveEdit()}
+                                disabled={savingEdit}
+                                className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-60"
+                              >
+                                {savingEdit ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
+                                Guardar
+                              </button>
+                              <button
+                                onClick={() => setEditState(null)}
+                                className="rounded-lg border border-[#ebe6df] px-3 py-1.5 text-[11px] text-[#7d6c64]"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -394,7 +549,7 @@ export default function CuentasPage() {
         )
       })}
 
-      {!migrationMissing && pending.length === 0 && (
+      {!migrationMissing && pending.length === 0 && sinPrecio.length === 0 && (
         <FadeIn>
           <div className="flex flex-col items-center py-10 text-center">
             <Wallet className="size-10 text-[#ebe6df]" />

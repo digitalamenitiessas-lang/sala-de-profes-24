@@ -77,6 +77,8 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Sal fina celusal', qty: 40, unit: 'g' },
       { name: 'Pimienta Blanca', qty: 20,  unit: 'g' },
       { name: 'Oregano',         qty: 15,  unit: 'g' },
+      // 500 g netos por kg de milanesa; lo que sobra no se reutiliza → 1 kg por tanda
+      { name: 'Rebozador Preferido 5Kg', qty: 1000, unit: 'g', note: 'pan rallado: lo que sobra se descarta' },
     ],
     output: { name: 'Milanesa cruda', unit: 'unidad', yieldPerBase: 13 },
     yieldNote: 'Bife 178g bruto (compra) → 150-160g neto tras limpieza. Cargar el PESO BRUTO comprado: 2,314kg ≈ 13 milanesas. La merma de limpieza (~15%) ya está incluida en el costo.',
@@ -85,7 +87,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
   {
     slug: 'albondiga',
     displayName: 'Albóndigas',
-    mainIngredientName: 'Carne molida', // sin stock_item hoy — avisar cuando se cree/confirme el nombre real
+    mainIngredientName: 'Molida Esp.', // antes "Carne molida": no existía y la molida nunca se descontaba
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [
@@ -123,24 +125,27 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Oregano',    qty: 3,   unit: 'g' },
       { name: 'Pimenton',   qty: 8,   unit: 'g' },
     ],
+    output: { name: 'salsa portuguesa unidad', unit: 'unidad', yieldPerBase: 18 },
     yieldNote: 'Porcionar en bolsitas de 170g. Por 3lt de tomate ≈ 18 porciones',
   },
 
   {
     slug: 'cajón-pollo',
     displayName: 'Porcionado de Cajón de Pollo',
-    mainIngredientName: 'Pollo', // sin stock_item hoy — "Pollo entero" fue dado de baja, "Filet de pollo" no es correcto como insumo (es lo que sale de este proceso)
+    // Lo que se compra (en Fudo: "Filet de pollo", por kg). Antes decía "Pollo" y
+    // encontraba "Pollo porcionado": el proceso se descontaba a sí mismo
+    mainIngredientName: 'Filet de pollo',
     baseQty: 15,
     baseUnit: 'kg',
     secondary: [],
     output: { name: 'Pollo porcionado', unit: 'unidad', yieldPerBase: 68 },
-    yieldNote: 'Filetear y porcionar en bolsitas de 200g. 15kg → 68 porciones',
+    yieldNote: 'Filetear y porcionar en bolsitas de 200g. 15kg → 65 a 70 porciones según el agua que pierde el filet (promedio 68)',
   },
 
   {
     slug: 'bastones-dambo',
     displayName: 'Bastones de Dambo / Mozzarella',
-    mainIngredientName: 'Queso dambo', // sin stock_item hoy — avisar cuando se cree/confirme el nombre real
+    mainIngredientName: 'Mozzarella Cilindro', // antes "Queso dambo", que no existe en stock
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [
@@ -156,6 +161,8 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
       { name: 'Pimenton',         qty: 40,  unit: 'g',  note: 'se mezcla en el pan rallado' },
       { name: 'Cereal triturado', qty: 150, unit: 'g', note: 'se mezcla en el pan rallado — sin stock_item hoy' },
     ],
+    // En stock se cuenta cada bastón (4 = 1 porción): 1 kg → 6 porciones → 24 bastones
+    output: { name: 'baston mozza unidad', unit: 'unidad', yieldPerBase: 24 },
     yieldNote: 'Bastones de 40g (4 bastones = 1 porción). Sin rebozar: 6 porciones / 1kg. Rebozado: bastón de 70g, porción 280g',
   },
 
@@ -228,7 +235,7 @@ export const PRODUCTION_BATCHES: ProductionBatch[] = [
   {
     slug: 'hamburguesa',
     displayName: 'Hamburguesas',
-    mainIngredientName: 'Carne molida', // sin stock_item hoy — mismo insumo que Albóndigas
+    mainIngredientName: 'Molida Esp.', // antes "Carne molida": no existía y la molida nunca se descontaba
     baseQty: 1,
     baseUnit: 'kg',
     secondary: [

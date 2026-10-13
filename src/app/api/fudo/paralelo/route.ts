@@ -110,8 +110,8 @@ export async function GET(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!profile || profile.role !== 'socio') {
-      return NextResponse.json({ error: 'Sólo socios' }, { status: 403 })
+    if (!profile || (profile.role !== 'socio' && profile.role !== 'encargado')) {
+      return NextResponse.json({ error: 'Solo encargados' }, { status: 403 })
     }
 
     const daysParam = Number(request.nextUrl.searchParams.get('days'))

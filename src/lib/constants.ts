@@ -19,6 +19,7 @@ export const ROLES: Record<AppRole, RoleConfig> = {
   runner:    { color: '#c67b4b', bg: '#fef3eb', emoji: '🏃', label: 'Runner' },
   cocina:    { color: '#a85d32', bg: '#faf0e4', emoji: '🍳', label: 'Cocina' },
   bacha:     { color: '#7a8b8b', bg: '#f0f3f3', emoji: '🧽', label: 'Bachero' },
+  cajero:    { color: '#3b6ab5', bg: '#eef3fb', emoji: '💵', label: 'Cajero' },
 } as const
 
 export const ROLE_OPTIONS = Object.entries(ROLES).map(([value, config]) => ({

@@ -345,6 +345,7 @@ const STATUS_CONFIG = {
   pending_review: { label: 'A validar', icon: ShieldCheck, color: 'text-[#d4943a] bg-amber-50' },
   completed:   { label: 'Completado',  icon: CheckCircle2,  color: 'text-[#006d5a] bg-[#e8f5f1]' },
   cancelled:   { label: 'Cancelado',   icon: XCircle,       color: 'text-[#ea504c] bg-red-50' },
+  rejected:    { label: 'Rechazada',   icon: XCircle,       color: 'text-[#ea504c] bg-red-50' },
 }
 
 function efficiencyColor(pct: number | null) {
@@ -378,6 +379,7 @@ export default function ProduccionPage() {
     in_progress: orders.filter((o) => o.status === 'in_progress').length,
     pending_review: orders.filter((o) => o.status === 'pending_review').length,
     completed: orders.filter((o) => o.status === 'completed').length,
+    rejected: orders.filter((o) => o.status === 'rejected').length,
   }
 
   const FILTERS = [
@@ -386,6 +388,8 @@ export default function ProduccionPage() {
     { key: 'in_progress', label: 'En curso',    count: counts.in_progress },
     { key: 'pending_review', label: 'A validar', count: counts.pending_review },
     { key: 'completed',   label: 'Completadas', count: counts.completed },
+    // Rechazadas solo aparece si hay alguna, para no sumar ruido
+    ...(counts.rejected > 0 ? [{ key: 'rejected', label: 'Rechazadas', count: counts.rejected }] : []),
   ]
 
   return (
@@ -510,6 +514,9 @@ export default function ProduccionPage() {
                         <p className="mt-1.5 truncate font-semibold text-[#3d2c24]">{order.name}</p>
                         {order.template_name && (
                           <p className="text-[12px] text-muted-foreground">{order.template_name}</p>
+                        )}
+                        {order.status === 'rejected' && order.review_notes && (
+                          <p className="mt-1 text-[12px] text-[#ea504c]">Motivo: {order.review_notes}</p>
                         )}
                       </div>
                       <ChevronRight className="mt-1 size-4 shrink-0 text-muted-foreground" />

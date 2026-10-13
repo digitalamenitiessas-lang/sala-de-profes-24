@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { useStockItems, type StockItem } from '@/lib/hooks/use-stock'
 import { canCountStock, isManagerOrAbove } from '@/lib/roles'
+import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDialog'
 import { STOCK_CATEGORIES } from '@/lib/constants'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn } from '@/components/ui/motion'
@@ -80,6 +81,7 @@ function StockPageContent() {
 
   const isManager = isManagerOrAbove(profile?.role)
   const canOperate = canCountStock(profile?.role)
+  const [faltante, setFaltante] = useState(false)
 
   const areaParam = searchParams.get('area')
   const [area, setArea] = useState<StockArea | 'all'>(isStockArea(areaParam) ? areaParam : 'all')
@@ -227,6 +229,15 @@ function StockPageContent() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {canOperate && (
+              <button
+                onClick={() => setFaltante(true)}
+                title="Avisar al encargado que algo se está terminando"
+                className="flex items-center gap-1 rounded-full bg-[#ea504c] px-2.5 py-1.5 text-[11px] font-bold text-white active:scale-95"
+              >
+                <AlertTriangle className="size-3.5" /> Avisar faltante
+              </button>
+            )}
             <Link href="/control" className={`flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-semibold ring-1 ${fudoUi.cls}`}>
               <FudoIcon className={`size-3.5 ${syncing ? 'animate-spin' : ''}`} />
               <span className="max-w-[9rem] truncate">{fudoUi.label}</span>
@@ -381,6 +392,14 @@ function StockPageContent() {
           {total.due > 0 && <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] tabular-nums">{(area === 'all' ? total : perArea.get(area))?.due ?? 0}</span>}
         </Link>
       </div>
+
+      {faltante && <ReportarFaltanteDialog onClose={() => setFaltante(false)} />}
+
+      {isManager && area === 'descartables' && (
+        <Link href="/stock/descartables" className="block rounded-xl bg-[#e8f5f1] px-4 py-3 text-[13px] font-semibold text-[#006d5a]">
+          Configurar qué vaso y tapa usa cada producto para llevar → se descuentan solos con las ventas
+        </Link>
+      )}
 
       <CountSheet
         item={selected}

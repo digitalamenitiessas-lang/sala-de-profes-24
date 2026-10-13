@@ -35,6 +35,18 @@
     {
       "path": "/api/cron/conteo-recordatorio",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/stock-preclose",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/stock-preclose",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/stock-preclose",
+      "schedule": "0 2 * * *"
     }
   ]
 }

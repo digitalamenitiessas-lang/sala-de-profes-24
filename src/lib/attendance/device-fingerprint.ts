@@ -25,6 +25,27 @@ export function generateDeviceFingerprint(): string {
   return `df_${hash.toString(36)}`
 }
 
+/**
+ * Identificador propio de ESTE celular: se genera una vez y queda guardado en
+ * el teléfono (sobrevive a cerrar sesión). La huella de arriba se arma con el
+ * modelo y el navegador, así que dos iPhone iguales daban la misma: no sirve
+ * para "un celular, una persona". Si el teléfono no deja guardar, se usa la
+ * huella vieja (el servidor no la usa para bloquear).
+ */
+const DEVICE_ID_KEY = 'lve_device_id'
+
+export function getDeviceId(): string {
+  try {
+    const guardado = localStorage.getItem(DEVICE_ID_KEY)
+    if (guardado && guardado.startsWith('dv_')) return guardado
+    const nuevo = `dv_${crypto.randomUUID()}`
+    localStorage.setItem(DEVICE_ID_KEY, nuevo)
+    return nuevo
+  } catch {
+    return generateDeviceFingerprint()
+  }
+}
+
 export function getDeviceLabel(): string {
   const ua = navigator.userAgent
   if (/iPhone/i.test(ua)) return 'iPhone Safari'

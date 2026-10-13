@@ -199,6 +199,10 @@ export async function POST(
       return NextResponse.json({ error: 'No se puede validar una producción cancelada' }, { status: 409 })
     }
 
+    if (order.status === 'rejected') {
+      return NextResponse.json({ error: 'No se puede validar una producción rechazada' }, { status: 409 })
+    }
+
     const fudoLinkErrors = await validateOrderFudoLinks(admin, id)
     if (fudoLinkErrors.length > 0) {
       return NextResponse.json({

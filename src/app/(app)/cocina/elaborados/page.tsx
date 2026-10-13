@@ -7,12 +7,13 @@ import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
-import { ArrowLeft, Check, ChefHat, ClipboardList, Clock, Loader2, Minus, Plus, Scale } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, ChefHat, ClipboardList, Clock, Loader2, Minus, Plus, Scale } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isKitchenRole } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { LoHiceDialog } from '@/components/produccion/LoHiceDialog'
 import { RecetaEditorDialog } from '@/components/produccion/RecetaEditorDialog'
+import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDialog'
 import type { Elaborado, ElaboradosPayload } from '@/lib/produccion/elaborados'
 import type { ConteoDelDia } from '@/lib/stock/conteo-diario'
 
@@ -56,6 +57,7 @@ function Elaborados() {
   const [filtro, setFiltro] = useState<Filtro>('todos')
   const [loHice, setLoHice] = useState<Elaborado | null>(null)
   const [receta, setReceta] = useState<Elaborado | null>(null)
+  const [faltante, setFaltante] = useState(false)
 
   const load = useCallback(async (fresh = false) => {
     try {
@@ -166,6 +168,18 @@ function Elaborados() {
           <LoHiceDialog elaborado={receta} puedeCerrar={false} onClose={() => setReceta(null)} onDone={() => setReceta(null)} />
         )
       )}
+
+      {/* Botón flotante: reportar faltante de insumo */}
+      {puedeVer && !loHice && !receta && !faltante && (
+        <button
+          onClick={() => setFaltante(true)}
+          className="fixed bottom-20 right-4 z-40 flex items-center gap-2 rounded-full bg-[#ea504c] px-4 py-3 text-[13px] font-bold text-white shadow-lg active:scale-95"
+        >
+          <AlertTriangle className="size-4" />
+          Falta insumo
+        </button>
+      )}
+      {faltante && <ReportarFaltanteDialog onClose={() => setFaltante(false)} />}
     </div>
   )
 }

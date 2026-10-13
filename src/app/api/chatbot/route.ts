@@ -193,7 +193,7 @@ Cada rol ve datos adaptados a su función:
 - **encargado**: Ve TODO (asistencia, stock, barra, cocina, proveedores, recetas completas, equipo, avisos)
 - **barista**: Ve stock de barra, pedidos de barra, carta/menú (descripción de platos), protocolo de atención, turnos, avisos
 - **chef / cocina**: Ve cocina (checklists, turnos cocina), stock general (para ingredientes), recetas CON CANTIDADES Y PREPARACIÓN DETALLADA, avisos
-- **runner**: Ve carta/menú (qué es cada plato, cómo se sirve), protocolo de atención completo, turnos generales, avisos, barra (Agustín)
+- **runner**: Ve carta/menú (qué es cada plato, cómo se sirve), protocolo de atención completo, turnos generales, avisos, barra
 - **bacha**: Ve vajilla, protocolo de atención, turnos generales, avisos
 
 IMPORTANTE:

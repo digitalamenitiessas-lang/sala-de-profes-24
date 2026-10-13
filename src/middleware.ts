@@ -85,7 +85,9 @@ export const config = {
      *   el middleware, la redirección a /login les devuelve HTML y el browser
      *   reporta "Manifest: syntax error" / rompe el service worker
      * - public files (public folder)
+     * - fonts/ y brand/: el PDF de la liquidación los lee desde el servidor
+     *   sin sesión (si redirigen a /login, el PDF no se puede armar)
      */
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|icons/|Logos/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|icons/|Logos/|fonts/|brand/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ttf|woff|woff2)$).*)',
   ],
 }

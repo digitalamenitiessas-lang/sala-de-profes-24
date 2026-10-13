@@ -11,6 +11,7 @@ import { FadeIn } from '@/components/ui/motion'
 import { cn } from '@/lib/utils'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
+import { RechazarProduccionDialog } from '@/components/produccion/RechazarProduccionDialog'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -19,7 +20,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 type OrderDetail = {
   id: number
   name: string
-  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled'
+  status: 'draft' | 'in_progress' | 'pending_review' | 'completed' | 'cancelled' | 'rejected'
   chef_name: string | null
   template_name: string | null
   notes: string | null
@@ -27,6 +28,7 @@ type OrderDetail = {
   submitted_at: string | null
   completed_at: string | null
   reviewed_at: string | null
+  review_notes: string | null
   inputs: {
     id: number
     stock_item_name: string
@@ -67,6 +69,7 @@ const STATUS_CONFIG = {
   pending_review: { label: 'Esperando validación', icon: ShieldCheck, color: 'text-[#d4943a]', bg: 'bg-amber-50' },
   completed:      { label: 'Validada',     icon: CheckCircle2, color: 'text-[#006d5a]', bg: 'bg-[#e8f5f1]' },
   cancelled:      { label: 'Cancelada',    icon: XCircle,      color: 'text-[#ea504c]', bg: 'bg-red-50' },
+  rejected:       { label: 'Rechazada',    icon: XCircle,      color: 'text-[#ea504c]', bg: 'bg-red-50' },
 }
 
 function effColor(pct: number | null) {
@@ -106,6 +109,7 @@ export default function ProduccionDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [validating, setValidating] = useState(false)
+  const [rechazando, setRechazando] = useState(false)
 
   const canValidate = isManagerOrAbove(profile?.role)
 
@@ -267,6 +271,13 @@ export default function ProduccionDetailPage() {
                       <><ShieldCheck className="size-4" />Validar y sync Fudo</>
                     )}
                   </button>
+                  <button
+                    onClick={() => setRechazando(true)}
+                    disabled={validating}
+                    className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-[13px] font-semibold text-[#ffb4b1] ring-1 ring-white/20 disabled:opacity-60 active:scale-[0.99]"
+                  >
+                    <XCircle className="size-4" />Rechazar
+                  </button>
                 </>
               ) : (
                 <div className="flex items-center gap-2">
@@ -274,6 +285,17 @@ export default function ProduccionDetailPage() {
                   <p className="text-[13px] font-medium">Esperando validación del encargado</p>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Rechazada: motivo */}
+          {order.status === 'rejected' && (
+            <div className="rounded-2xl bg-red-50 p-4 ring-1 ring-[#f3c9c7]">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[#ea504c]">Rechazada</p>
+              <p className="mt-1 text-[13px] font-medium text-[#3d2c24]">{order.review_notes || 'Sin motivo'}</p>
+              <p className="mt-1 text-[11px] text-[#7d6c64]">
+                {formatDate(order.reviewed_at)} · No se tocó el stock. Si hacía falta, cargala de nuevo bien.
+              </p>
             </div>
           )}
 
@@ -414,6 +436,14 @@ export default function ProduccionDetailPage() {
           )}
         </FadeIn>
       </div>
+
+      {rechazando && (
+        <RechazarProduccionDialog
+          orden={order}
+          onClose={() => setRechazando(false)}
+          onDone={() => { setRechazando(false); void loadOrder() }}
+        />
+      )}
     </div>
   )
 }

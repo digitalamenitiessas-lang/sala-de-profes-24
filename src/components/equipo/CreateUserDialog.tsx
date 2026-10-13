@@ -24,15 +24,21 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ROLE_OPTIONS } from '@/lib/constants'
+import { ENCARGADO_MANAGED_ROLES } from '@/lib/roles'
 import type { AppRole } from '@/types/database'
 
 type CreateUserDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCreated: () => void
+  callerRole?: AppRole | null
 }
 
-export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDialogProps) {
+export function CreateUserDialog({ open, onOpenChange, onCreated, callerRole }: CreateUserDialogProps) {
+  const availableRoles = callerRole === 'encargado'
+    ? ROLE_OPTIONS.filter((o) => ENCARGADO_MANAGED_ROLES.includes(o.value))
+    : ROLE_OPTIONS
+
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     email: '',
@@ -88,7 +94,9 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDi
         throw new Error(data.error || 'Error al crear usuario')
       }
 
-      toast.success(`Usuario ${form.firstName} ${form.lastName} creado`)
+      toast.success(data.reactivated
+        ? `${form.firstName} ${form.lastName} ya tenía cuenta desactivada: quedó reactivado con la contraseña nueva`
+        : `Usuario ${form.firstName} ${form.lastName} creado`)
       resetForm()
       onOpenChange(false)
       onCreated()
@@ -167,7 +175,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: CreateUserDi
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ROLE_OPTIONS.map((opt) => (
+                  {availableRoles.map((opt) => (
                     <SelectItem key={opt.value} value={opt.value}>
                       {opt.label}
                     </SelectItem>

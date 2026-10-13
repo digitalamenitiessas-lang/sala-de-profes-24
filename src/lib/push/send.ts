@@ -1,5 +1,6 @@
 import webpush from 'web-push'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { idsConRolEnTurno } from '@/lib/turnos/rol-del-turno'
 
 // Configure VAPID
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? ''
@@ -57,22 +58,22 @@ export async function sendPushToUser(userId: string, payload: { title: string; b
 }
 
 // ---------------------------------------------------------------------------
-// Send push to all users with a specific role
+// Send push to all users with a specific role (de perfil, o trabajando ahora
+// con ese rol según su turno)
 // ---------------------------------------------------------------------------
 export async function sendPushToRole(role: string, payload: { title: string; body: string; url?: string }) {
   if (!VAPID_PUBLIC || !VAPID_PRIVATE) return
 
   const admin = createAdminClient()
-  const { data: profiles } = await admin
-    .from('profiles')
-    .select('id')
-    .eq('role', role)
-    .eq('is_active', true)
-
-  if (!profiles?.length) return
+  const [{ data: profiles }, enTurno] = await Promise.all([
+    admin.from('profiles').select('id').eq('role', role).eq('is_active', true),
+    idsConRolEnTurno(admin, [role]),
+  ])
+  const ids = new Set([...(profiles ?? []).map((p) => p.id), ...enTurno])
+  if (ids.size === 0) return
 
   await Promise.allSettled(
-    profiles.map((p) => sendPushToUser(p.id, payload)),
+    [...ids].map((id) => sendPushToUser(id, payload)),
   )
 }
 

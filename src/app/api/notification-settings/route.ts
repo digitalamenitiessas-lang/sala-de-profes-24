@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isSocio } from '@/lib/roles'
+import { isManagerOrAbove } from '@/lib/roles'
 import { getNotificationSettings, saveNotificationSetting, DEFAULT_NOTIFICATION_EVENTS } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
@@ -14,8 +14,8 @@ async function authorize(supabase: Awaited<ReturnType<typeof createClient>>) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: NextResponse.json({ error: 'No autenticado' }, { status: 401 }) }
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-  if (!isSocio(profile?.role)) {
-    return { error: NextResponse.json({ error: 'Solo socio puede configurar notificaciones' }, { status: 403 }) }
+  if (!isManagerOrAbove(profile?.role)) {
+    return { error: NextResponse.json({ error: 'Solo encargados pueden configurar notificaciones' }, { status: 403 }) }
   }
   return { user, error: null }
 }

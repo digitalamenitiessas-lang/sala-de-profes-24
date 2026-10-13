@@ -1,6 +1,6 @@
 # Pendientes — Sala de Profes 24 y Maipú
 
-Actualizado: 2026-09-29.
+Actualizado: 2026-10-13 (apertura de la 24). Incluye los cambios de LVE hasta el 13/10 (ver §7).
 
 ## Dónde estamos
 
@@ -10,7 +10,7 @@ Actualizado: 2026-09-29.
 | Vercel `sala-de-profes-24.vercel.app` | ✅ Deployado, con las variables de la 24 |
 | Base Supabase `hmoqksbyfemzprpsxovu` | ✅ Estructura de LVE sin datos (ver `supabase/estructura/README.md`) |
 | Perfil de socio | ✅ Creado ("Admin24 Socio": cambiar el nombre en Configuración) |
-| Relojes pg_cron | ✅ `fudo-pulso`, `fudo-sync-reintento`, `protocolos-avisos` y `auto-clockout` (cada hora), todos respondiendo 200 |
+| Relojes pg_cron | ✅ `fudo-pulso`, `fudo-sync-reintento`, `protocolos-avisos`, `fichajes-cierre` (cada 15'), `resumen-semanal`, `resumen-turno-tm/tt` |
 | Fudo | ⏳ Faltan las credenciales de la cuenta de la 24 |
 | Resend (mails) | ⏳ La clave está, pero la cuenta no tiene dominio verificado (ver §3) |
 | IA (OpenRouter) | ⏳ Falta la clave (opcional) |
@@ -103,7 +103,7 @@ Después: `EMAIL_FROM` en `.env.local` y `RESEND_API_KEY` + `EMAIL_FROM` en Verc
 - Chatbot: urgencias de pedidos de barra, columnas inexistentes y "hoy" en hora de Argentina.
 - Resumen ejecutivo, analítica del salón y conciliación de stock: "hoy" en hora de Argentina (antes
   cambiaba de día a las 21:00).
-- Cierre automático de fichajes cada hora (antes una vez por día, a las 16:00).
+- Cierre automático de fichajes: ahora cada 15' (`fichajes-cierre`, viene de LVE).
 - IA: modelo centralizado en `src/lib/ai/model.ts` (variable `OPENROUTER_MODEL`). Sigue en
   `anthropic/claude-sonnet-4`, igual que LVE. **Para pasar a Sonnet 5 o posterior hay que sacar
   `temperature`** (esos modelos lo rechazan con error 400) y revisar `max_tokens` (razonan por
@@ -132,3 +132,41 @@ En LVE no se tocó nada. Como referencia sirve `supabase/estructura/03_ajustes_s
   `scripts/update-profiles.mjs` del repo de LVE.
 
 **Bugs:** los de la sección 5 (mismos archivos). El más urgente es la salida del fichaje.
+
+## 7. Sincronización con LVE (13/10)
+
+Se trajeron los 90 cambios de LVE del 29/09 al 13/10 (compras y gastos en Fudo, pedidos, turnos con
+rol, liquidación por turno con feriados y PDF, rol Cajero, ausencias, WiFi del local, botón "Llegó",
+recetario de platos, protocolos de tolva/descartables/elaborados, alerta de stock crítico, resúmenes
+por Telegram, etc.), conservando todas las adaptaciones de la 24.
+
+- **Base:** aplicado `supabase/estructura/04_sync_lve_2026-10-13.sql` (estructura idéntica a LVE salvo
+  los ajustes de seguridad de la 24). Feriados nacionales 2026 cargados.
+- **Para volver a sincronizar más adelante:** `git fetch lve` (el remoto `lve` es solo lectura), aplicar
+  `git diff <último sincronizado> lve/main` en una rama y comparar las bases con
+  `supabase/estructura/comparar_catalogo.sql`. Último commit de LVE sincronizado: `2cb4da4`.
+
+**Falta (dueño):**
+- **Tarifas por hora de los 7 roles** (encargado, cajero, chef, cocina, barista, runner, bacha). En LVE:
+  cajero, chef y barista $4.200, cocina $4.000. Archivo listo: sección B de
+  `supabase/estructura/05_datos_lve_2026-10-13_PENDIENTE_DUENO.sql`.
+- **Protocolos nuevos** (Control de tolva 08:00/16:00/23:30, Control de descartables 08:30/16:30,
+  Conteo de elaborados 15:30): ¿mismos horarios en la 24? Sección C del mismo archivo.
+- **Horarios de turno:** los resúmenes de Telegram suponen turnos 06-16 y 16-06 (como LVE).
+- **Telegram:** si quieren los resúmenes de turno, un **bot propio de la 24** (no el de LVE) en
+  `TELEGRAM_JOB_BOT` y vincular el grupo desde la app.
+
+**Falta (cuando conecte Fudo):**
+- Mirar `GET /payment-methods` del Fudo de la 24 y, si hace falta, cargar `FUDO_MEDIOS_PAGO`. Sin eso,
+  si un medio no se encuentra por tipo, el pago corta con error (antes se imputaba con ids de LVE).
+- Revisar que existan con ese nombre los insumos que usa Nueva producción
+  (`src/lib/recipes/production-batches.ts`: 'Rebozador Preferido 5Kg', 'Molida Esp.', 'Filet de pollo',
+  'Mozzarella Cilindro', etc.).
+- Regenerar `src/types/database.ts` contra la base de la 24 (hay ~11 errores de tipos que vienen de LVE).
+
+**Para avisarle a tu compañero (además de §6):**
+- `_deduct_stock_item` y `fn_stock_critico_manana` quedaron ejecutables **sin sesión** en LVE (la
+  primera permite cambiar el stock de cualquier insumo por la API pública). En la 24 están cerradas.
+- **Alta de Cajero:** queda como encargado sin puesto (el upsert del perfil choca con el trigger).
+  Arreglado en la 24 en `src/app/api/admin/create-user/route.ts` (`fijarPuestoCajero`).
+- `profiles.puesto` no está protegido: un empleado puede cambiarse el puesto y cobrar otra tarifa.

@@ -13,6 +13,8 @@ import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
 import { ROLES } from '@/lib/constants'
 import { cn } from '@/lib/utils'
+import { errorToast } from '@/lib/toast-helpers'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 import type { AttendanceDashboardRow } from '@/types/database'
 import type { AppRole } from '@/types/database'
 
@@ -36,7 +38,18 @@ type HistoryRecord = {
   is_suspicious: boolean
 }
 
-const ROLE_ORDER: AppRole[] = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+const ROLE_ORDER: AppRole[] = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha']
+
+// Filtros de la lista: mismo criterio que el estado que muestra cada fila
+type Filtro = 'todos' | 'trabajando' | 'salieron' | 'no_ficharon' | 'sin_fichar' | 'sin_turno'
+const FILTROS: { key: Filtro; label: string; test: (e: AttendanceDashboardRow) => boolean }[] = [
+  { key: 'todos', label: 'Todos', test: () => true },
+  { key: 'trabajando', label: 'Trabajando', test: (e) => e.is_currently_in },
+  { key: 'salieron', label: 'Salieron', test: (e) => !e.is_currently_in && !!e.last_event_time },
+  { key: 'no_ficharon', label: 'No ficharon', test: (e) => !e.is_currently_in && !e.last_event_time && e.no_show },
+  { key: 'sin_fichar', label: 'Todavía no entran', test: (e) => !e.is_currently_in && !e.last_event_time && !e.no_show && !!e.shift_today },
+  { key: 'sin_turno', label: 'Sin turno hoy', test: (e) => !e.is_currently_in && !e.last_event_time && !e.no_show && !e.shift_today },
+]
 
 function fmtDuration(start: string, end: string | null): string {
   if (!end) return ''
@@ -56,13 +69,18 @@ function EmployeeRow({
   history,
   loadingHistory,
   onToggle,
+  anulandoId,
+  onAnular,
 }: {
   emp: AttendanceDashboardRow
   isExpanded: boolean
   history: HistoryRecord[] | null
   loadingHistory: boolean
   onToggle: () => void
+  anulandoId: string | null
+  onAnular: (recordId: string) => void
 }) {
+  const hoyOperativo = fechaOperativa()
   const roleConfig = ROLES[emp.role as AppRole] ?? { label: emp.role, color: '#a39e97', bg: '#f3efe9', emoji: '👤' }
   const hoursStr = emp.total_hours > 0
     ? `${Math.floor(emp.total_hours)}h ${Math.round((emp.total_hours % 1) * 60)}m`
@@ -220,6 +238,19 @@ function EmployeeRow({
                       </div>
                     )}
 
+                    {/* Entrada de hoy sin salida: se puede anular si fue un error */}
+                    {isSinEgreso && !r.clock_out_at && r.operative_date === hoyOperativo && (
+                      <button
+                        onClick={() => onAnular(r.id)}
+                        disabled={!!anulandoId}
+                        className="flex shrink-0 items-center gap-1 rounded-md border border-[#ea504c]/30 bg-white px-2 py-0.5 text-[10px] font-semibold text-[#ea504c] hover:bg-[#fef2f2] disabled:opacity-50"
+                        title="Borrar esta entrada: fue marcada por error"
+                      >
+                        {anulandoId === r.id && <Loader2 className="size-3 animate-spin" />}
+                        Anular
+                      </button>
+                    )}
+
                     {/* Status badge */}
                     <div className="shrink-0">
                       {r.is_suspicious ? (
@@ -259,6 +290,9 @@ export default function EquipoAsistenciaPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [historyCache, setHistoryCache] = useState<Record<string, HistoryRecord[]>>({})
   const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(null)
+  const [anulandoId, setAnulandoId] = useState<string | null>(null)
+  const [filtro, setFiltro] = useState<Filtro>('todos')
+  const elegirFiltro = (f: Filtro) => setFiltro((actual) => (actual === f ? 'todos' : f))
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -298,6 +332,29 @@ export default function EquipoAsistenciaPage() {
     }
   }
 
+  // Deshace una entrada marcada por error ("Llegó" sin querer)
+  async function anularIngreso(emp: AttendanceDashboardRow, recordId: string) {
+    if (anulandoId) return
+    if (!window.confirm(`¿Anular la entrada de ${emp.first_name}? Se borra como si no hubiera fichado hoy.`)) return
+    setAnulandoId(recordId)
+    try {
+      const res = await fetch('/api/admin/anular-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_id: recordId, reason: 'Marcada por error' }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${emp.first_name} anulada`)
+      setHistoryCache(prev => ({ ...prev, [emp.employee_id]: (prev[emp.employee_id] ?? []).filter(r => r.id !== recordId) }))
+      fetchData()
+    } catch (err) {
+      errorToast('No se pudo anular la entrada', err)
+    } finally {
+      setAnulandoId(null)
+    }
+  }
+
   if (profileLoading) return <LoadingState />
 
   if (!profile || !isEncargado) {
@@ -319,6 +376,7 @@ export default function EquipoAsistenciaPage() {
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
   })
 
+  const visibles = sorted.filter(FILTROS.find((f) => f.key === filtro)!.test)
   const present = employees.filter(e => e.is_currently_in).length
   const anomalyCount = employees.reduce((s, e) => s + e.open_anomalies, 0)
   const noShowCount = employees.filter(e => e.no_show).length
@@ -345,14 +403,23 @@ export default function EquipoAsistenciaPage() {
 
       {/* KPI strip: presencia + exactitud de horas del día */}
       <div className="grid grid-cols-4 gap-2">
-        <div className="card-elevated rounded-xl p-3 text-center">
+        {/* Tocar Presentes / No ficharon filtra la lista */}
+        <button
+          type="button"
+          onClick={() => elegirFiltro('trabajando')}
+          className={cn('card-elevated rounded-xl p-3 text-center', filtro === 'trabajando' && 'ring-2 ring-[#006d5a]')}
+        >
           <p className="font-display text-2xl font-bold text-[#006d5a]">{present}</p>
           <p className="mt-0.5 text-[10px] text-[#a39e97]">Presentes</p>
-        </div>
-        <div className={cn('rounded-xl p-3 text-center', noShowCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated')}>
+        </button>
+        <button
+          type="button"
+          onClick={() => elegirFiltro('no_ficharon')}
+          className={cn('rounded-xl p-3 text-center', noShowCount > 0 ? 'bg-[#fef2f2]' : 'card-elevated', filtro === 'no_ficharon' && 'ring-2 ring-[#ea504c]')}
+        >
           <p className={cn('font-display text-2xl font-bold', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#3d2c24]')}>{noShowCount}</p>
           <p className={cn('mt-0.5 text-[10px]', noShowCount > 0 ? 'text-[#ea504c]' : 'text-[#a39e97]')}>No ficharon</p>
-        </div>
+        </button>
         <div className="card-elevated rounded-xl p-3 text-center">
           <p className="font-display text-2xl font-bold tabular-nums text-[#3d2c24]">
             {workedH}<span className="text-sm font-medium text-[#a39e97]">/{scheduledH}</span>
@@ -371,8 +438,30 @@ export default function EquipoAsistenciaPage() {
         <>
           {/* Employee list */}
           <div className="space-y-1.5">
+            {/* Filtros */}
+            <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1.5">
+              {FILTROS.map((f) => {
+                const n = sorted.filter(f.test).length
+                if (n === 0 && f.key !== 'todos' && f.key !== filtro) return null
+                const activo = filtro === f.key
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    onClick={() => setFiltro(f.key)}
+                    className={cn(
+                      'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors',
+                      activo ? 'border-[#006d5a] bg-[#006d5a] text-white' : 'border-[#ebe6df] bg-white text-[#7d6c64]',
+                    )}
+                  >
+                    {f.label}
+                    <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', activo ? 'bg-white/20' : 'bg-[#f3efe9]')}>{n}</span>
+                  </button>
+                )
+              })}
+            </div>
             <p className="section-label px-1">Equipo — tocá para ver historial</p>
-            {sorted.map(emp => (
+            {visibles.map(emp => (
               <EmployeeRow
                 key={emp.employee_id}
                 emp={emp}
@@ -380,11 +469,13 @@ export default function EquipoAsistenciaPage() {
                 history={historyCache[emp.employee_id] ?? null}
                 loadingHistory={loadingHistoryFor === emp.employee_id}
                 onToggle={() => toggleEmployee(emp.employee_id)}
+                anulandoId={anulandoId}
+                onAnular={(recordId) => anularIngreso(emp, recordId)}
               />
             ))}
-            {sorted.length === 0 && (
+            {visibles.length === 0 && (
               <div className="rounded-xl border border-[#ebe6df] bg-white p-8 text-center text-sm text-[#a39e97]">
-                No hay empleados registrados.
+                {sorted.length === 0 ? 'No hay empleados registrados.' : 'Nadie en este filtro.'}
               </div>
             )}
           </div>

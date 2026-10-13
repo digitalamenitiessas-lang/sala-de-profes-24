@@ -27,13 +27,14 @@ import {
   Armchair,
   ClipboardCheck,
   Hammer,
+  ClipboardList,
   ScanFace,
   Sparkles,
   Wifi,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
-import { mustClockIn } from '@/lib/roles'
+import { mustClockIn, isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { createClient } from '@/lib/supabase/client'
 import { useState, useEffect, useCallback } from 'react'
@@ -89,10 +90,10 @@ const COCINA_NAV: NavItem[] = [
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
 
-// Barista: la tolva es su herramienta de cada turno
+// Barista: Hoy como ancla del turno (vista de barra) + Tolva en el Más
 const BARISTA_NAV: NavItem[] = [
   { label: 'Inicio', href: '/', icon: Home },
-  { label: 'Tolva', href: '/tolva', icon: Coffee },
+  { label: 'Hoy', href: '/hoy', icon: CalendarDays },
   { label: 'Mi Turno', href: '/mi-turno', icon: Clock },
   { label: 'Avisos', href: '/notificaciones', icon: Bell },
 ]
@@ -123,9 +124,11 @@ const SOCIO_MORE: ExpandableNavItem = {
       items: [
         { label: 'Ventas', href: '/ventas', icon: BarChart3, description: 'Facturación y tickets sincronizados desde Fudo' },
         { label: 'Reportes', href: '/admin/reportes', icon: BookOpen, description: 'Food cost, márgenes y ventas por período' },
-        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Limpieza del baño: asignar, foto y registro' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Baño, tolva y descartables: asignar, foto y registro' },
+        { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
       ],
     },
@@ -160,9 +163,11 @@ const ENCARGADO_MORE: ExpandableNavItem = {
       label: 'Operación',
       items: [
         { label: 'Reportes', href: '/admin/reportes', icon: BookOpen, description: 'Food cost, márgenes y ventas por período' },
-        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Limpieza del baño: asignar, foto y registro' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Baño, tolva y descartables: asignar, foto y registro' },
+        { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
       ],
     },
@@ -184,9 +189,12 @@ const CHEF_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
+        { label: 'Recetario', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato y cómo se arma' },
       ],
     },
     {
@@ -207,9 +215,12 @@ const COCINA_MORE: ExpandableNavItem = {
     {
       label: 'Cocina',
       items: [
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
-        { label: 'Recetario', href: '/recetas', icon: BookOpen, description: 'Ver recetas e insumos' },
+        { label: 'Recetario', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato y cómo se arma' },
       ],
     },
     {
@@ -222,7 +233,7 @@ const COCINA_MORE: ExpandableNavItem = {
   ],
 }
 
-// BARISTA — vajilla y herramientas
+// BARISTA — tolva, vajilla y herramientas
 const BARISTA_MORE: ExpandableNavItem = {
   label: 'Más',
   icon: MoreHorizontal,
@@ -230,6 +241,10 @@ const BARISTA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Tolva', href: '/tolva', icon: Coffee, description: 'Control de la tolva del día' },
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tolva, descartables y baño: tareas con horario' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
+        { label: 'Descartables', href: '/stock?area=descartables', icon: Package, description: 'Contar vasos y tapas · avisar faltantes' },
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
@@ -246,9 +261,11 @@ const RUNNER_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Horarios', href: '/mis-horarios', icon: Calendar, description: 'Mis turnos y con quién trabajo' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
       ],
     },
   ],
@@ -262,7 +279,9 @@ const BACHA_MORE: ExpandableNavItem = {
     {
       label: 'Herramientas',
       items: [
+        { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Controlar roturas y faltantes' },
+        { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'La Vieja', href: '/asistente', icon: Bot, description: 'Consultar por chat' },
       ],
     },
@@ -294,6 +313,7 @@ export function BottomNav() {
   const { profile } = useProfileContext()
   const [moreOpen, setMoreOpen] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
+  const [stockAlertCount, setStockAlertCount] = useState(0)
 
   const nav = getNavItems(profile?.role)
   const more = nav.more
@@ -333,6 +353,22 @@ export function BottomNav() {
       clearInterval(interval)
     }
   }, [fetchUnread])
+
+  // Badge de stock crítico — solo encargados/socios
+  useEffect(() => {
+    if (!profile || !isManagerOrAbove(profile.role)) return
+    async function fetchStockAlerts() {
+      try {
+        const res = await fetch('/api/stock/alertas')
+        if (!res.ok) return
+        const d = await res.json() as { count?: number }
+        setStockAlertCount(d.count ?? 0)
+      } catch { /* silencioso */ }
+    }
+    const t = window.setTimeout(() => { void fetchStockAlerts() }, 500)
+    const iv = setInterval(() => { void fetchStockAlerts() }, 60_000)
+    return () => { window.clearTimeout(t); clearInterval(iv) }
+  }, [profile])
 
   // Immediately decrement badge when a notification is marked as read
   useEffect(() => {
@@ -475,6 +511,7 @@ export function BottomNav() {
             const Icon = item.icon
             const active = isActive(item.href)
             const showBadge = item.href === '/notificaciones' && unreadCount > 0
+            const showStockBadge = item.href === '/stock' && stockAlertCount > 0
             return (
               <Link
                 key={item.href}
@@ -502,6 +539,11 @@ export function BottomNav() {
                   {showBadge && (
                     <span className="absolute -right-1.5 -top-1 flex size-4.5 items-center justify-center rounded-full bg-[#ea504c] text-[9px] font-bold text-white shadow-sm">
                       {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                  {showStockBadge && (
+                    <span className="absolute -right-1.5 -top-1 flex size-4.5 items-center justify-center rounded-full bg-[#ea504c] text-[9px] font-bold text-white shadow-sm">
+                      {stockAlertCount > 9 ? '9+' : stockAlertCount}
                     </span>
                   )}
                 </div>

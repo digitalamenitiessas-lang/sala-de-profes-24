@@ -113,6 +113,12 @@ export async function removeCurrentPushSubscription() {
 export async function signOutBrowserSession() {
   const supabase = createClient()
 
-  await removeCurrentPushSubscription().catch(() => {})
+  // Dar de baja los avisos de este celular, con tiempo máximo: si el service
+  // worker no está activo, `serviceWorker.ready` no se resuelve nunca y antes
+  // la sesión no llegaba a cerrarse (se volvía al inicio con la sesión abierta).
+  await Promise.race([
+    removeCurrentPushSubscription().catch(() => {}),
+    new Promise((r) => setTimeout(r, 1500)),
+  ])
   await supabase.auth.signOut().catch(() => {})
 }

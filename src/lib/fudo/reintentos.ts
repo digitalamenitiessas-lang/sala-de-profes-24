@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fudoFetch } from '@/lib/fudoClient'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { writeFudoStockDelta } from '@/lib/fudo/stock-sync'
+import { parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // Cola de reintentos hacia Fudo
@@ -14,8 +14,9 @@ import { writeFudoStockDelta } from '@/lib/fudo/stock-sync'
 //   3. Si a la hora sigue fallando, avisa a socios (una vez).
 //   4. Mientras está pendiente, la lectura de stock desde Fudo le suma el
 //      pendiente, así el espejo nocturno no borra el movimiento.
-//   5. A los 3 días sin poder entrar se descarta (el stock ya se habrá
-//      contado de nuevo) y queda registrado.
+//   5. A los 3 días sin poder entrar, un movimiento de STOCK se descarta (el
+//      stock ya se habrá contado de nuevo). Gastos y pagos nunca se descartan
+//      por tiempo: son plata y se reintentan hasta que entren.
 // ---------------------------------------------------------------------------
 
 export const ALERTA_MIN = 60
@@ -23,7 +24,7 @@ export const DESCARTE_HORAS = 72
 
 export type Reintento = {
   id: string
-  tipo: 'stock_delta' | 'pago_gasto'
+  tipo: 'stock_delta' | 'pago_gasto' | 'crear_gasto'
   stock_item_id: string | null
   delta: number | null
   payload: Record<string, unknown>
@@ -74,10 +75,12 @@ export async function encolarPagoGasto(admin: SupabaseClient, input: {
   receiptId: number | string
   error: string
   userId?: string | null
+  /** efectivo | transferencia | tarjeta (sin dato: efectivo, como antes) */
+  medio?: string | null
 }): Promise<void> {
   const { error } = await admin.from('fudo_reintentos').insert({
     tipo: 'pago_gasto',
-    payload: { fudo_expense_id: input.fudoExpenseId, monto: input.monto, receipt_id: String(input.receiptId) },
+    payload: { fudo_expense_id: input.fudoExpenseId, monto: input.monto, receipt_id: String(input.receiptId), ...(input.medio ? { medio: input.medio } : {}) },
     origen: 'pago_gasto',
     ultimo_error: input.error.slice(0, 500),
     intentos: 1,
@@ -85,6 +88,44 @@ export async function encolarPagoGasto(admin: SupabaseClient, input: {
     created_by: input.userId ?? null,
   })
   if (error) console.error('[fudo_reintentos] no se pudo encolar pago', error.message)
+}
+
+/**
+ * Guarda un gasto de Fudo que no se pudo crear (Fudo estaba caído o rechazó
+ * la llamada). Cuando el cron lo reintente, creará el gasto y, si `thenPay`
+ * es true, también el pago correspondiente.
+ */
+export async function encolarCrearGasto(admin: SupabaseClient, input: {
+  fudoProviderId: string
+  amount: number
+  date: string
+  receiptId: number
+  thenPay: boolean
+  error: string
+  userId?: string | null
+  /** Categoría y comprobante: el gasto reintentado sale igual que el original */
+  gasto?: DatosGasto | null
+  /** efectivo | transferencia | tarjeta | cuenta_corriente */
+  medio?: string | null
+}): Promise<void> {
+  const { error } = await admin.from('fudo_reintentos').insert({
+    tipo: 'crear_gasto',
+    payload: {
+      fudo_provider_id: input.fudoProviderId,
+      amount: input.amount,
+      date: input.date,
+      receipt_id: String(input.receiptId),
+      then_pay: input.thenPay,
+      ...(input.gasto ? { gasto: input.gasto } : {}),
+      ...(input.medio ? { medio: input.medio } : {}),
+    },
+    origen: 'crear_gasto',
+    ultimo_error: input.error.slice(0, 500),
+    intentos: 1,
+    proximo_intento_at: new Date(Date.now() + esperaMin(1) * 60_000).toISOString(),
+    created_by: input.userId ?? null,
+  })
+  if (error) console.error('[fudo_reintentos] no se pudo encolar crear_gasto', error.message)
 }
 
 /** Cancela el pago pendiente de un recibo (se desmarcó como pagado). */
@@ -107,14 +148,45 @@ export async function deltasPendientes(admin: SupabaseClient): Promise<Map<strin
 
 async function reintentarUno(admin: SupabaseClient, r: Reintento): Promise<{ ok: boolean; error?: string; descartar?: string }> {
   if (r.tipo === 'pago_gasto') {
-    const { fudo_expense_id, monto } = r.payload as { fudo_expense_id?: string; monto?: number }
+    const { fudo_expense_id, monto, medio } = r.payload as { fudo_expense_id?: string; monto?: number; medio?: string }
     if (!fudo_expense_id || !monto) return { ok: false, descartar: 'Datos del pago incompletos' }
     try {
-      await fudoFetch(`/expenses/${fudo_expense_id}/payments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: monto, canceled: false } } }),
-      })
+      const { postFudoPayment, fudoExpensePagado } = await import('@/lib/fudo/expenses')
+      // Mientras estaba en cola pudo pagarse en Fudo (orden de pago): no duplicar
+      if (await fudoExpensePagado(fudo_expense_id)) return { ok: true }
+      await postFudoPayment({ expenseId: fudo_expense_id, amount: monto, medio })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'Error' }
+    }
+  }
+
+  if (r.tipo === 'crear_gasto') {
+    const { fudo_provider_id, amount, date, receipt_id, then_pay, gasto, medio } = r.payload as {
+      fudo_provider_id?: string; amount?: number; date?: string; receipt_id?: string; then_pay?: boolean; gasto?: unknown; medio?: string
+    }
+    if (!fudo_provider_id || !amount || !date || !receipt_id) return { ok: false, descartar: 'Datos del gasto incompletos' }
+    try {
+      const { postFudoExpense, postFudoPayment } = await import('@/lib/fudo/expenses')
+      const expenseId = await postFudoExpense({ fudoProviderId: fudo_provider_id, amount, date, gasto: parseDatosGasto(gasto, { confiable: true }), medioPago: medio })
+      if (!expenseId) return { ok: false, error: 'Fudo no devolvió ID de gasto' }
+      // Guardar el ID en el recibo para que el PATCH de pago lo encuentre directamente
+      await admin.from('stock_receipts').update({ fudo_expense_id: expenseId }).eq('id', Number(receipt_id))
+      if (then_pay) {
+        try {
+          await postFudoPayment({ expenseId, amount, medio })
+        } catch (payErr) {
+          // El gasto existe: solo reencolar el pago
+          await encolarPagoGasto(admin, {
+            fudoExpenseId: expenseId,
+            monto: amount,
+            receiptId: Number(receipt_id),
+            error: payErr instanceof Error ? payErr.message : 'Error al pagar',
+            userId: r.created_by ?? null,
+            medio,
+          })
+        }
+      }
       return { ok: true }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : 'Error' }
@@ -180,7 +252,9 @@ export async function procesarReintentos(admin: SupabaseClient, limite = 25): Pr
     if (res.ok) {
       await admin.from('fudo_reintentos').update({ estado: 'hecho', hecho_at: new Date().toISOString(), intentos: r.intentos + 1, ultimo_error: null, updated_at: new Date().toISOString() }).eq('id', r.id)
       out.hechos++
-    } else if (res.descartar || edadHoras >= DESCARTE_HORAS) {
+    } else if (res.descartar || (edadHoras >= DESCARTE_HORAS && r.tipo === 'stock_delta')) {
+      // Plata (crear un gasto, imputar un pago) NO se descarta por tiempo: se
+      // sigue reintentando hasta que Fudo lo acepte (el aviso a socios sale igual)
       await admin.from('fudo_reintentos').update({ estado: 'descartado', intentos: r.intentos + 1, ultimo_error: res.descartar ?? `Sin poder entrar a Fudo en ${DESCARTE_HORAS} h: ${res.error ?? ''}`.slice(0, 500), updated_at: new Date().toISOString() }).eq('id', r.id)
       out.descartados++
     } else {
@@ -201,7 +275,7 @@ export async function procesarReintentos(admin: SupabaseClient, limite = 25): Pr
     const ids = new Set((marcados ?? []).map((m: { id: string }) => m.id))
     const nuevos = sinAvisar.filter((v) => ids.has(v.id))
     if (nuevos.length > 0) {
-      const nombres = [...new Set(nuevos.map((v) => v.stock_items?.name ?? (v.origen === 'pago_gasto' ? 'un pago de gasto' : 'un movimiento')))]
+      const nombres = [...new Set(nuevos.map((v) => v.stock_items?.name ?? (v.origen === 'pago_gasto' ? 'un pago de gasto' : v.origen === 'crear_gasto' ? 'un gasto sin crear' : 'un movimiento')))]
       await notifyEvent(admin, 'fudo_problema', {
         title: `⚠️ ${nuevos.length === 1 ? 'Un movimiento no entra' : `${nuevos.length} movimientos no entran`} a Fudo`,
         body: `${nombres.slice(0, 4).join(', ')}${nombres.length > 4 ? '…' : ''}. Motivo: ${(nuevos[0].ultimo_error ?? '').slice(0, 110)}. Se sigue reintentando solo.`,

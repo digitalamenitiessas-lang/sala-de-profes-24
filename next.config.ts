@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  // El PDF de la liquidación (@react-pdf) se carga tal cual en el servidor:
+  // sus paquetes solo exponen ESM y no se llevan bien con el empaquetado.
+  serverExternalPackages: ['@react-pdf/renderer'],
 };
 
 export default nextConfig;

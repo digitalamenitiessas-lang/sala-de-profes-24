@@ -225,8 +225,8 @@ export async function PATCH(
       return NextResponse.json({ error: 'Orden no encontrada' }, { status: 404 })
     }
 
-    if (order.status === 'completed' || order.status === 'cancelled') {
-      return NextResponse.json({ error: `No se puede modificar una orden ${order.status}` }, { status: 409 })
+    if (order.status === 'completed' || order.status === 'cancelled' || order.status === 'rejected') {
+      return NextResponse.json({ error: `No se puede modificar una orden ${order.status === 'rejected' ? 'rechazada' : order.status}` }, { status: 409 })
     }
 
     const action: string = body.action ?? 'update'

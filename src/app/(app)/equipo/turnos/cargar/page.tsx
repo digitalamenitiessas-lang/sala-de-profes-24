@@ -5,6 +5,9 @@
 // Modelo mental del equipo: personas × días, con ~8 turnos que se repiten.
 // Interacción: tocás el día → elegís la ficha del turno → guardado. Un botón
 // "Copiar semana anterior" precarga todo y solo se ajustan las diferencias.
+// El rol del turno viene marcado con el de la persona; si ese día trabaja de
+// otra cosa (un runner de barista, de encargado) se toca el rol y listo.
+// Los socios no usan turnos: no aparecen.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
@@ -18,17 +21,18 @@ import {
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, puestoDe } from '@/lib/roles'
 import { logAuditClient } from '@/lib/audit'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { FadeIn } from '@/components/ui/motion'
 import type { AppRole, ShiftInsert } from '@/types/database'
 
 type Employee = { id: string; first_name: string; last_name: string; role: AppRole }
-type Shift = { id: string; user_id: string; shift_date: string; start_time: string; end_time: string }
+type Shift = { id: string; user_id: string; shift_date: string; start_time: string; end_time: string; shift_role: AppRole }
 
 const ROLE_SECTIONS: { role: AppRole; label: string }[] = [
   { role: 'encargado', label: 'Encargados' },
+  { role: 'cajero', label: 'Cajeros' },
   { role: 'cocina', label: 'Cocina' },
   { role: 'chef', label: 'Chef' },
   { role: 'barista', label: 'Baristas' },
@@ -49,6 +53,8 @@ const DEFAULT_PRESETS: { start: string; end: string }[] = [
   { start: '17:00', end: '00:00' },
 ]
 
+const ROL_CORTO: Partial<Record<AppRole, string>> = { encargado: 'Encargado', cajero: 'Cajero', cocina: 'Cocina', chef: 'Chef', barista: 'Barista', runner: 'Runner', bacha: 'Bacha' }
+
 const hhmm = (t: string) => t.slice(0, 5)
 const presetLabel = (p: { start: string; end: string }) => `${hhmm(p.start)}–${hhmm(p.end)}`
 
@@ -68,6 +74,7 @@ export default function CargarTurnosPage() {
   const [pickerCell, setPickerCell] = useState<{ userId: string; date: string } | null>(null)
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
+  const [pickerRole, setPickerRole] = useState<AppRole>('runner')
   const [savingCell, setSavingCell] = useState(false)
 
   const weekDays = useMemo(
@@ -81,11 +88,13 @@ export default function CargarTurnosPage() {
     setLoading(true)
     try {
       const [empRes, shiftRes, histRes] = await Promise.all([
-        supabase.from('profiles').select('id, first_name, last_name, role').eq('is_active', true).order('first_name'),
-        supabase.from('shifts').select('id, user_id, shift_date, start_time, end_time').gte('shift_date', weekStartStr).lte('shift_date', weekEndStr),
+        supabase.from('profiles').select('id, first_name, last_name, role, puesto').eq('is_active', true).neq('role', 'socio').order('first_name'),
+        supabase.from('shifts').select('id, user_id, shift_date, start_time, end_time, shift_role').gte('shift_date', weekStartStr).lte('shift_date', weekEndStr),
         supabase.from('shifts').select('start_time, end_time').gte('shift_date', format(subDays(new Date(), 28), 'yyyy-MM-dd')).limit(1000),
       ])
-      setEmployees((empRes.data ?? []) as Employee[])
+      // El cajero tiene rol encargado (permisos) y puesto cajero: se agrupa y
+      // se le cargan los turnos como cajero
+      setEmployees(((empRes.data ?? []) as (Employee & { puesto: AppRole | null })[]).map(e => ({ ...e, role: puestoDe(e) })))
       setShifts((shiftRes.data ?? []) as Shift[])
 
       // Turnos frecuentes reales de las últimas 4 semanas
@@ -117,32 +126,31 @@ export default function CargarTurnosPage() {
 
   // --- Acciones por celda: tocar ficha = guardar al instante ---
 
-  async function setShift(userId: string, date: string, start: string, end: string) {
+  async function setShift(userId: string, date: string, start: string, end: string, role: AppRole, cerrar = true) {
     if (!profile) return
     setSavingCell(true)
     try {
       const existing = shiftFor(userId, date)
-      const emp = employees.find(e => e.id === userId)
       if (existing) {
         const { error } = await supabase.from('shifts')
-          .update({ start_time: start, end_time: end })
+          .update({ start_time: start, end_time: end, shift_role: role })
           .eq('id', existing.id)
         if (error) throw error
-        setShifts(prev => prev.map(s => s.id === existing.id ? { ...s, start_time: start, end_time: end } : s))
+        setShifts(prev => prev.map(s => s.id === existing.id ? { ...s, start_time: start, end_time: end, shift_role: role } : s))
       } else {
         const insertData: ShiftInsert = {
           user_id: userId,
           shift_date: date,
           start_time: start,
           end_time: end,
-          shift_role: emp?.role ?? 'runner',
+          shift_role: role,
           created_by: profile.id,
         }
         const { data, error } = await supabase.from('shifts').insert(insertData).select('id').single()
         if (error) throw error
-        setShifts(prev => [...prev, { id: data.id, user_id: userId, shift_date: date, start_time: start, end_time: end }])
+        setShifts(prev => [...prev, { id: data.id, user_id: userId, shift_date: date, start_time: start, end_time: end, shift_role: role }])
       }
-      setPickerCell(null)
+      if (cerrar) setPickerCell(null)
     } catch (err) {
       // Mostrar el motivo real (permisos, datos): antes solo decía "no se pudo"
       toast.error(`No se pudo guardar el turno${err && typeof err === 'object' && 'message' in err ? `: ${String((err as { message: unknown }).message)}` : ''}`)
@@ -361,6 +369,7 @@ export default function CargarTurnosPage() {
                                 setPickerCell(isPicking ? null : { userId: emp.id, date: dateStr })
                                 setCustomStart(shift ? hhmm(shift.start_time) : '')
                                 setCustomEnd(shift ? hhmm(shift.end_time) : '')
+                                setPickerRole(shift?.shift_role ?? emp.role)
                               }}
                               className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left transition-colors ${
                                 isPicking ? 'bg-[#e8f5f1] ring-1 ring-[#006d5a]/30' : 'hover:bg-[#faf8f5]'
@@ -370,8 +379,15 @@ export default function CargarTurnosPage() {
                                 {format(day, 'EEE d', { locale: es })}
                               </span>
                               {shift ? (
-                                <span className="rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11px] font-bold text-[#006d5a]">
-                                  {hhmm(shift.start_time)}–{hhmm(shift.end_time)}
+                                <span className="flex items-center gap-1">
+                                  {shift.shift_role !== emp.role && (
+                                    <span className="rounded-full bg-[#fdf6ec] px-2 py-1 text-[10px] font-bold text-[#b0762a]">
+                                      {ROL_CORTO[shift.shift_role] ?? shift.shift_role}
+                                    </span>
+                                  )}
+                                  <span className="rounded-full bg-[#e8f5f1] px-2.5 py-1 text-[11px] font-bold text-[#006d5a]">
+                                    {hhmm(shift.start_time)}–{hhmm(shift.end_time)}
+                                  </span>
                                 </span>
                               ) : (
                                 <span className="flex items-center gap-1 rounded-full bg-[#f3efe9] px-2.5 py-1 text-[11px] font-semibold text-[#a39e97]">
@@ -382,12 +398,32 @@ export default function CargarTurnosPage() {
 
                             {isPicking && (
                               <div className="mt-1 space-y-2 rounded-xl bg-[#faf8f5] p-2.5">
+                                {/* Rol de ese día: viene marcado el de la persona */}
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <span className="mr-0.5 text-[10px] font-semibold text-[#a39e97]">Trabaja de</span>
+                                  {ROLE_SECTIONS.map(({ role: r }) => (
+                                    <button
+                                      key={r}
+                                      disabled={savingCell}
+                                      onClick={() => {
+                                        setPickerRole(r)
+                                        // Si ya tiene turno, el cambio de rol se guarda al toque
+                                        if (shift && r !== shift.shift_role) void setShift(emp.id, dateStr, shift.start_time, shift.end_time, r, false)
+                                      }}
+                                      className={`rounded-full px-2 py-1 text-[10px] font-bold transition-all active:scale-95 disabled:opacity-50 ${
+                                        pickerRole === r ? 'bg-[#3d2c24] text-white' : 'bg-white text-[#7d6c64] ring-1 ring-[#ebe6df]'
+                                      }`}
+                                    >
+                                      {ROL_CORTO[r]}
+                                    </button>
+                                  ))}
+                                </div>
                                 <div className="flex flex-wrap gap-1.5">
                                   {frequents.map(p => (
                                     <button
                                       key={presetLabel(p)}
                                       disabled={savingCell}
-                                      onClick={() => setShift(emp.id, dateStr, p.start, p.end)}
+                                      onClick={() => setShift(emp.id, dateStr, p.start, p.end, pickerRole)}
                                       className="rounded-full bg-white px-3 py-1.5 text-[11px] font-bold text-[#3d2c24] ring-1 ring-[#ebe6df] transition-all hover:ring-[#006d5a] active:scale-95 disabled:opacity-50"
                                     >
                                       {presetLabel(p)}
@@ -415,7 +451,7 @@ export default function CargarTurnosPage() {
                                   />
                                   <button
                                     disabled={savingCell || !customStart || !customEnd}
-                                    onClick={() => setShift(emp.id, dateStr, customStart, customEnd)}
+                                    onClick={() => setShift(emp.id, dateStr, customStart, customEnd, pickerRole)}
                                     className="rounded-lg bg-[#006d5a] p-2 text-white active:scale-95 disabled:opacity-40"
                                   >
                                     {savingCell ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}

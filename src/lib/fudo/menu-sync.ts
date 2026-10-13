@@ -113,16 +113,18 @@ const normNombre = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0
 async function desactivarBorradosEnFudo(supabase: SupabaseClient, idsEnFudo: Set<string>): Promise<string[]> {
   if (idsEnFudo.size < 50) return []
   const { data } = await supabase.from('menu_items')
-    .select('id, name, fudo_product_id, recipe_id, consumo_modo, consumo_stock_item_id, consumo_qty, is_active')
+    .select('id, name, fudo_product_id, recipe_id, consumo_modo, consumo_stock_item_id, consumo_qty, recipe_link_source, is_active')
     .not('fudo_product_id', 'is', null).eq('is_active', true)
-  type Row = { id: string; name: string; fudo_product_id: string; recipe_id: string | null; consumo_modo: string | null; consumo_stock_item_id: string | null; consumo_qty: number | null }
+  type Row = { id: string; name: string; fudo_product_id: string; recipe_id: string | null; consumo_modo: string | null; consumo_stock_item_id: string | null; consumo_qty: number | null; recipe_link_source: string | null }
   const activos = (data ?? []) as Row[]
   const borrados = activos.filter((m) => !idsEnFudo.has(String(m.fudo_product_id)))
   if (borrados.length === 0 || borrados.length > activos.length * 0.15) return []
 
   for (const b of borrados) {
     if (b.consumo_modo) {
-      const gemelo = activos.find((m) => m.id !== b.id && idsEnFudo.has(String(m.fudo_product_id)) && normNombre(m.name) === normNombre(b.name) && !m.consumo_modo && !m.recipe_id)
+      const gemelo = activos.find((m) => m.id !== b.id && idsEnFudo.has(String(m.fudo_product_id)) && normNombre(m.name) === normNombre(b.name) && !m.consumo_modo && !m.recipe_id
+        // no pisar un plato que una persona desvinculó a propósito
+        && m.recipe_link_source !== 'manual')
       if (gemelo) {
         await supabase.from('menu_items').update({
           recipe_id: b.recipe_id, consumo_modo: b.consumo_modo, consumo_stock_item_id: b.consumo_stock_item_id, consumo_qty: b.consumo_qty, recipe_link_source: 'auto_nombre',

@@ -39,19 +39,23 @@ export async function cargarDatosCierre(admin: SupabaseClient, fechas: string[])
   return { turnos: (turnos ?? []) as Turno[], cierres: (cierres ?? []) as Cierre[] }
 }
 
+/** Sin turno cargado, una salida olvidada no puede sumar más que esto. */
+export const MAX_HORAS_SIN_TURNO = 9
+
 /**
  * Hora prevista de salida de un fichaje abierto:
  *   1. el turno cargado de ese día (si hay dos, el que corresponde a la hora
  *      de entrada: el que empieza más cerca antes de entrar)
- *   2. el horario de cierre del local de ese día (excepción por fecha o el
- *      de ese día de la semana)
+ *   2. sin turno: el horario de cierre del local de ese día (excepción por
+ *      fecha o el de ese día de la semana), pero nunca más de 9 h después de
+ *      la entrada (entrar 09:28 y olvidarse la salida sumaba 14,5 h)
  * Sin la vieja regla "si entró antes de las 12 cierra a las 16": cortaba a
  * quien hacía turno doble.
  */
 export function cierrePrevisto(
   log: { user_id: string; operative_date: string; clock_in_at: string },
   datos: DatosCierre,
-): { at: Date; fuente: 'turno' | 'horario de cierre' } {
+): { at: Date; fuente: 'turno' | 'horario de cierre' | 'sin turno: máximo 9 h' } {
   const entrada = new Date(log.clock_in_at).getTime()
   const turnos = datos.turnos
     .filter((t) => t.user_id === log.user_id && t.shift_date === log.operative_date && t.end_time)
@@ -74,5 +78,7 @@ export function cierrePrevisto(
     ?? '00:00'
   let at = instanteDe(log.operative_date, cierre)
   if (at.getTime() <= entrada) at = new Date(entrada + 60_000) // nunca antes de la entrada
+  const tope = entrada + MAX_HORAS_SIN_TURNO * 3_600_000
+  if (at.getTime() > tope) return { at: new Date(tope), fuente: 'sin turno: máximo 9 h' }
   return { at, fuente: 'horario de cierre' }
 }

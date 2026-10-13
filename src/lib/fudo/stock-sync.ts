@@ -479,7 +479,7 @@ export async function writeFudoStockDelta(
       // Sin stock legible en Fudo (control de stock apagado) no hay base sobre
       // la cual sumar: escribir `delta` a secas sería inventar un absoluto.
       if (before === null) {
-        return { success: false, error: 'Fudo no informa stock de este insumo (¿control de stock apagado?). No se puede sumar ni restar sobre un valor desconocido.', fudoBefore: null }
+        return { success: false, error: 'Fudo no tiene cargada la cantidad de este insumo, así que no se le puede sumar ni restar. Solución: contalo y cargá el conteo en Stock; eso le pone la cantidad en Fudo y este pendiente se descarta solo.', fudoBefore: null }
       }
       const after = Math.round((before + delta) * 100) / 100
       const write = await writeFudoStock(link.fudoIngredientId, after, {
@@ -494,7 +494,7 @@ export async function writeFudoStockDelta(
     if (link.fudoProductId) {
       const before = await readFudoProductStock(link.fudoProductId)
       if (before === null) {
-        return { success: false, error: 'Fudo no informa stock de este producto (¿control de stock apagado?). No se puede sumar ni restar sobre un valor desconocido.', fudoBefore: null }
+        return { success: false, error: 'Fudo no tiene cargada la cantidad de este producto, así que no se le puede sumar ni restar. Solución: contalo y cargá el conteo en Stock; eso le pone la cantidad en Fudo y este pendiente se descarta solo.', fudoBefore: null }
       }
       const after = Math.round((before + delta) * 100) / 100
       const write = await writeFudoProductStock(link.fudoProductId, after, {
@@ -1200,6 +1200,16 @@ export async function syncToFudo(
       description: `${item.name}: ${item.current_qty} → ${finalQty} (sincronizado con Fudo)`,
       metadata: { fudo_id: fudoLink, old_qty: item.current_qty, new_qty: finalQty, synced: true, reason: writeReason, note, movement_id: movementId },
     })
+
+    // El conteo físico deja Fudo con la cantidad real: los movimientos de este
+    // insumo que esperaban entrar (producción, recepción) ya están incluidos en
+    // lo contado. Si se reintentaran, se sumarían dos veces.
+    if (writeReason === 'physical_count') {
+      await admin.from('fudo_reintentos')
+        .update({ estado: 'descartado', ultimo_error: 'Ya incluido en el conteo físico', updated_at: new Date().toISOString() })
+        .eq('stock_item_id', stockItemId).eq('tipo', 'stock_delta').eq('estado', 'pendiente')
+        .then(() => null, () => null)
+    }
 
     if (avisarAjuste) {
       after(() => notifyEvent(admin, 'stock_adjusted', {

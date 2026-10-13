@@ -17,17 +17,35 @@ export type DistanceResult = {
 }
 
 const GEO_TIMEOUT = 15000
+// Algunos celulares nunca llaman a ningún callback (ni éxito ni error, p. ej.
+// con el permiso pendiente): sin este tope la pantalla quedaba girando.
+const GEO_HARD_TIMEOUT = GEO_TIMEOUT + 5000
 
-export function getCurrentPosition(): Promise<GeoResult> {
+/**
+ * @param options.maximumAge acepta una lectura del GPS de hasta N ms (0 = nueva).
+ */
+export function getCurrentPosition(options: { maximumAge?: number } = {}): Promise<GeoResult> {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
       resolve({ status: 'unavailable', error: 'Geolocalización no disponible en este navegador' })
       return
     }
 
+    let done = false
+    const finish = (r: GeoResult) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve(r)
+    }
+    const timer = setTimeout(
+      () => finish({ status: 'timeout', error: 'Tiempo de espera agotado' }),
+      GEO_HARD_TIMEOUT,
+    )
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        resolve({
+        finish({
           status: 'success',
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -35,12 +53,12 @@ export function getCurrentPosition(): Promise<GeoResult> {
         })
       },
       (err) => {
-        if (err.code === 1) resolve({ status: 'denied', error: 'Permiso de ubicación denegado' })
-        else if (err.code === 2) resolve({ status: 'unavailable', error: 'Ubicación no disponible' })
-        else if (err.code === 3) resolve({ status: 'timeout', error: 'Tiempo de espera agotado' })
-        else resolve({ status: 'error', error: err.message })
+        if (err.code === 1) finish({ status: 'denied', error: 'Permiso de ubicación denegado' })
+        else if (err.code === 2) finish({ status: 'unavailable', error: 'Ubicación no disponible' })
+        else if (err.code === 3) finish({ status: 'timeout', error: 'Tiempo de espera agotado' })
+        else finish({ status: 'error', error: err.message })
       },
-      { enableHighAccuracy: true, timeout: GEO_TIMEOUT, maximumAge: 0 },
+      { enableHighAccuracy: true, timeout: GEO_TIMEOUT, maximumAge: options.maximumAge ?? 0 },
     )
   })
 }

@@ -11,6 +11,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //   'sin_consumo' → no descuenta (servicio, "Frita", "Horno"…)
 //   null          → sin resolver: aparece en la lista para vincular
 //
+// Desvincular (desvincularPlato) lo vuelve a null y deja
+// recipe_link_source = 'manual': "una persona lo dejó sin vincular a
+// propósito", así la vinculación automática no lo vuelve a pegar solo.
+//
 // La mayoría se resuelve SOLO (autoVincularPlatos), así la lista se vacía y
 // deja de existir:
 //   · Versiones de otro canal ("Wrap de vacío peya") → la receta del plato
@@ -26,12 +30,14 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // ---------------------------------------------------------------------------
 
 const CANAL = /\b(peya|pedidos ?ya|take ?away|delivery|rappi)\b/g
-const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'al', 'a', 'x', 'entrada', 'entradas', 'porcion'])
+const STOP = new Set(['de', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'al', 'a', 'x', 'entrada', 'entradas', 'porcion',
+  'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'])
 // Variantes de escritura que aparecen en la carta de Fudo
 const SINONIMO: Record<string, string> = {
   mozzarella: 'muzza', muzzarella: 'muzza', mozarella: 'muzza', mozza: 'muzza', muza: 'muzza', muzarella: 'muzza',
   calabreza: 'calabresa', caesar: 'cesar', sanguche: 'sandwich', sanguchito: 'sandwich', ciabata: 'ciabatta',
   jyq: 'jq', fugaza: 'fugazza',
+  mila: 'milanesa', napo: 'napolitana',
 }
 const TAMANIO = /(\d+(?:[.,]\d+)?)\s*(ml|cc|cm3|g|gr|grs|kg|l|lt|lts|litro|litros)\b/
 
@@ -87,6 +93,9 @@ type MenuRow = {
   fudo_product_id: string | null
   is_active: boolean
   consumo_modo: string | null
+  consumo_stock_item_id: string | null
+  consumo_qty: number | null
+  recipe_link_source: string | null
 }
 type RecipeRow = { id: string; name: string }
 type StockRow = { id: string; name: string; unit: string; area: string | null; fudo_product_id: string | null }
@@ -113,7 +122,7 @@ type Base = {
 
 async function cargarBase(admin: SupabaseClient): Promise<Base> {
   const [menu, recipes, stock] = await Promise.all([
-    all<MenuRow>((f, t) => admin.from('menu_items').select('id, name, recipe_id, fudo_product_id, is_active, consumo_modo').order('id').range(f, t)),
+    all<MenuRow>((f, t) => admin.from('menu_items').select('id, name, recipe_id, fudo_product_id, is_active, consumo_modo, consumo_stock_item_id, consumo_qty, recipe_link_source').order('id').range(f, t)),
     all<RecipeRow>((f, t) => admin.from('recipes').select('id, name').eq('is_active', true).order('id').range(f, t)),
     all<StockRow>((f, t) => admin.from('stock_items').select('id, name, unit, area, fudo_product_id, is_produced').eq('is_active', true).order('id').range(f, t)),
   ])
@@ -203,6 +212,10 @@ export type AutoVincularResult = {
   propuestas?: { plato: string; accion: 'receta' | 'insumo'; destino: string }[]
 }
 
+/** Sin vínculo por decisión de una persona (ver desvincularPlato) */
+const desvinculadoAMano = (m: Pick<MenuRow, 'consumo_modo' | 'recipe_id' | 'recipe_link_source'>) =>
+  m.consumo_modo === null && !m.recipe_id && m.recipe_link_source === 'manual'
+
 let ultimaCorrida: { at: number; result: AutoVincularResult } | null = null
 export const ultimaAutoVinculacion = () => ultimaCorrida
 
@@ -219,6 +232,8 @@ export async function autoVincularPlatos(admin: SupabaseClient, options: { prueb
 
   for (const m of base.menu) {
     if (m.consumo_modo !== null) continue
+    // Lo desvinculó una persona: queda en la lista, no se vuelve a vincular solo
+    if (desvinculadoAMano(m)) continue
     if (m.recipe_id) {
       // tenía receta pero sin modo (alta vieja): queda resuelto
       if (!options.prueba) {
@@ -272,10 +287,25 @@ export type PlatoPendiente = {
   insumos_sugeridos: SugerenciaInsumo[]
 }
 
+/** Plato que ya sabe qué descontar (se puede desvincular) */
+export type PlatoVinculado = {
+  menu_item_id: string
+  name: string
+  modo: 'receta' | 'insumo' | 'combo' | 'sin_consumo'
+  /** "Receta X" · "0,19 l de Leche" · null para combo / sin consumo */
+  destino: string | null
+  /** quién lo vinculó: 'manual' | 'auto_nombre' | 'importacion' | null */
+  origen: string | null
+  units: number
+  revenue: number
+}
+
 export type VentasVinculosPayload = {
   days: number
   pendientes: PlatoPendiente[]
   opciones: PlatoPendiente[]
+  /** Lo ya vinculado, ordenado por lo vendido (activos y de Fudo) */
+  vinculados: PlatoVinculado[]
   resumen: {
     revenue_total: number
     revenue_pendiente: number
@@ -388,11 +418,47 @@ export async function buildVentasVinculos(admin: SupabaseClient, days = 30): Pro
   }
   opciones.sort((a, b) => b.units - a.units)
 
+  // Lo ya vinculado: para poder revisarlo y deshacer un vínculo mal hecho.
+  // Las recetas inactivas no están en base.recipes: se buscan aparte.
+  const nombreReceta = new Map(base.recipes.map((r) => [r.id, r.name]))
+  const nombreInsumo = new Map(base.stock.map((s) => [s.id, s]))
+  const linkeados = base.menu.filter((m) => m.is_active && m.fudo_product_id && (m.consumo_modo !== null || m.recipe_id))
+  const faltanRecetas = [...new Set(linkeados.map((m) => m.recipe_id).filter((id): id is string => !!id && !nombreReceta.has(id)))]
+  const faltanInsumos = [...new Set(linkeados.map((m) => m.consumo_stock_item_id).filter((id): id is string => !!id && !nombreInsumo.has(id)))]
+  const [extraRecetas, extraInsumos] = await Promise.all([
+    faltanRecetas.length ? admin.from('recipes').select('id, name').in('id', faltanRecetas) : Promise.resolve({ data: [] }),
+    faltanInsumos.length ? admin.from('stock_items').select('id, name, unit').in('id', faltanInsumos) : Promise.resolve({ data: [] }),
+  ])
+  for (const r of (extraRecetas.data ?? []) as RecipeRow[]) nombreReceta.set(r.id, `${r.name} (inactiva)`)
+  for (const s of (extraInsumos.data ?? []) as { id: string; name: string; unit: string }[]) {
+    nombreInsumo.set(s.id, { ...s, area: null, fudo_product_id: null })
+  }
+  const vinculados: PlatoVinculado[] = linkeados.map((m) => {
+    const modo = (m.consumo_modo ?? 'receta') as PlatoVinculado['modo']
+    const insumo = m.consumo_stock_item_id ? nombreInsumo.get(m.consumo_stock_item_id) : undefined
+    const destino = modo === 'receta'
+      ? (m.recipe_id ? nombreReceta.get(m.recipe_id) ?? 'Receta borrada' : null)
+      : modo === 'insumo'
+        ? `${(Number(m.consumo_qty) || 0).toLocaleString('es-AR', { maximumFractionDigits: 3 })} ${insumo?.unit ?? ''} de ${insumo?.name ?? 'insumo borrado'}`
+        : null
+    const v = porProducto.get(String(m.fudo_product_id))
+    return {
+      menu_item_id: m.id,
+      name: m.name,
+      modo,
+      destino,
+      origen: m.recipe_link_source,
+      units: Math.round((v?.units ?? 0) * 100) / 100,
+      revenue: Math.round(v?.revenue ?? 0),
+    }
+  }).sort((a, b) => b.revenue - a.revenue || b.units - a.units || a.name.localeCompare(b.name, 'es'))
+
   const autoRows = (autos.data ?? []) as { consumo_modo: string | null }[]
   return {
     days,
     pendientes,
     opciones,
+    vinculados,
     resumen: {
       revenue_total: Math.round(revenueTotal),
       revenue_pendiente: Math.round(revenuePendiente),
@@ -402,5 +468,63 @@ export async function buildVentasVinculos(admin: SupabaseClient, days = 30): Pro
     },
     recetas: base.recipes.slice().sort((a, b) => a.name.localeCompare(b.name, 'es')),
     insumos: base.stock.map((s) => ({ id: s.id, name: s.name, unit: s.unit })).sort((a, b) => a.name.localeCompare(b.name, 'es')),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Desvincular: deshacer un vínculo mal hecho
+// ---------------------------------------------------------------------------
+// El plato vuelve a "sin vincular" (aparece de nuevo en la lista) y queda
+// marcado como decisión de una persona (recipe_link_source = 'manual'), así la
+// vinculación automática no lo vuelve a pegar solo por el nombre.
+//
+// No reescribe nada del pasado: el stock que ya se descontó por ventas
+// anteriores queda como está (stock_items / stock_logs). Desde ahora las
+// ventas de este plato no descuentan nada hasta que se vuelva a vincular.
+// ---------------------------------------------------------------------------
+
+export type VinculoAnterior = {
+  consumo_modo: string | null
+  recipe_id: string | null
+  consumo_stock_item_id: string | null
+  consumo_qty: number | null
+  recipe_link_source: string | null
+}
+
+export async function desvincularPlato(admin: SupabaseClient, menuItemId: string): Promise<
+  { ok: true; name: string; anterior: VinculoAnterior } | { ok: false; status: number; error: string }
+> {
+  const { data: plato, error: errLeer } = await admin.from('menu_items')
+    .select('id, name, consumo_modo, recipe_id, consumo_stock_item_id, consumo_qty, recipe_link_source')
+    .eq('id', menuItemId).maybeSingle()
+  if (errLeer) throw new Error(errLeer.message)
+  if (!plato) return { ok: false, status: 404, error: 'Plato no encontrado' }
+  if (plato.consumo_modo === null && !plato.recipe_id) return { ok: false, status: 409, error: 'Este plato ya está sin vincular' }
+
+  // Condicional: si alguien lo cambió en el medio, no se pisa
+  let q = admin.from('menu_items').update({
+    consumo_modo: null,
+    recipe_id: null,
+    consumo_stock_item_id: null,
+    consumo_qty: null,
+    recipe_link_source: 'manual',
+    updated_at: new Date().toISOString(),
+  }).eq('id', plato.id)
+  q = plato.consumo_modo === null ? q.is('consumo_modo', null) : q.eq('consumo_modo', plato.consumo_modo)
+  q = plato.recipe_id ? q.eq('recipe_id', plato.recipe_id) : q.is('recipe_id', null)
+  const { data: cambiados, error } = await q.select('id')
+  if (error) throw new Error(error.message)
+  if (!cambiados || cambiados.length === 0) return { ok: false, status: 409, error: 'El plato cambió mientras tanto. Recargá y probá de nuevo.' }
+
+  return {
+    ok: true,
+    name: plato.name as string,
+    anterior: {
+      consumo_modo: plato.consumo_modo as string | null,
+      recipe_id: plato.recipe_id as string | null,
+      consumo_stock_item_id: plato.consumo_stock_item_id as string | null,
+      consumo_qty: plato.consumo_qty as number | null,
+      recipe_link_source: plato.recipe_link_source as string | null,
+    },
   }
 }

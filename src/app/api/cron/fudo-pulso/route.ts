@@ -5,6 +5,9 @@ import { procesarReintentos } from '@/lib/fudo/reintentos'
 import { asegurarVentasDeHoy } from '@/lib/fudo/ventas-intradia'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { sincronizarMenu } from '@/lib/fudo/menu-sync'
+import { sincronizarPagosDesdeFudo } from '@/lib/compras/pagos-fudo'
+import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
+import { avisosOperativos } from '@/lib/avisos/operativos'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-pulso — cada 10 minutos (pg_cron en Supabase)
@@ -16,6 +19,7 @@ import { sincronizarMenu } from '@/lib/fudo/menu-sync'
 //   3. Ventas de hoy: se traen si la última importación tiene más de 10 min
 //   4. Stock de Fudo: se lee cada hora
 //   5. Menú y precios: una vez por día
+//   7. Pagos hechos en Fudo (orden de pago a proveedores): una vez por hora
 //   6. Limpia registros colgados y cierra errores que eran solo de conexión
 // Cada paso es independiente: si uno falla, los demás siguen.
 // ---------------------------------------------------------------------------
@@ -69,6 +73,12 @@ export async function GET(request: NextRequest) {
   // 3. Ventas de hoy
   await paso('ventas', () => asegurarVentasDeHoy(admin, { maxAgeMin: 10 }))
 
+  // 3b. Descartables de las ventas para llevar (vasos, tapas…)
+  await paso('descartables', () => procesarDescartablesParaLlevar(admin))
+
+  // 3c. Avisos al encargado: pedidos que siguen en camino, producciones sin validar
+  await paso('avisos_operativos', () => avisosOperativos(admin))
+
   const salud = await leerSalud(admin)
 
   // 4. Stock de Fudo cada hora
@@ -88,6 +98,14 @@ export async function GET(request: NextRequest) {
       const r = await sincronizarMenu(admin)
       await actualizarSalud(admin, { ultimo_menu_at: new Date().toISOString() })
       return { productos: r.importedProducts, cambiados: r.cambiados, nuevos: r.nuevos, borrados_en_fudo: r.borradosEnFudo }
+    })
+  }
+
+  // 7. Pagos hechos en Fudo → recibos "a pagar" de Sala de Profes (1 vez por hora)
+  if (new Date().getMinutes() < 10) {
+    await paso('pagos_fudo', async () => {
+      const r = await sincronizarPagosDesdeFudo(admin)
+      return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, errores: r.errores }
     })
   }
 

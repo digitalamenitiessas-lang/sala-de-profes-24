@@ -19,6 +19,7 @@ import {
   Pencil,
   Loader2,
   Search,
+  UserCheck,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import Link from 'next/link'
@@ -27,11 +28,12 @@ import { Button } from '@/components/ui/button'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { mustClockIn } from '@/lib/roles'
+import { mustClockIn, puestoDe } from '@/lib/roles'
 import { errorToast } from '@/lib/toast-helpers'
 import { createClient } from '@/lib/supabase/client'
 import { SWR_KEYS } from '@/lib/swr/keys'
 import { ROLES } from '@/lib/constants'
+import { ETIQUETA_AUSENCIA, MOTIVOS_AUSENCIA, type Ausencia, type MotivoAusencia } from '@/lib/attendance/ausencias'
 import type { Profile, AppRole } from '@/types/database'
 
 import { CreateUserDialog } from '@/components/equipo/CreateUserDialog'
@@ -55,6 +57,8 @@ type EmployeeAttendance = {
   profile: Profile
   attendance: AttendanceRecord | null
   hasShiftToday: boolean
+  /** Motivo anotado por el encargado si tenía turno y no fichó */
+  ausencia: Ausencia | null
   shiftStart?: string
   shiftEnd?: string
 }
@@ -71,6 +75,14 @@ export default function EquipoPage() {
 
   const [tab, setTab] = useState<TabValue>('asistencia')
   const [selectedDate, setSelectedDate] = useState(new Date())
+  // /equipo?date=YYYY-MM-DD abre ese día (enlaces de la liquidación y de los avisos)
+  useEffect(() => {
+    const d = new URLSearchParams(window.location.search).get('date')
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      const fecha = new Date(`${d}T12:00:00`)
+      if (!Number.isNaN(fecha.getTime()) && fecha <= new Date()) setSelectedDate(fecha)
+    }
+  }, [])
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
 
@@ -81,8 +93,18 @@ export default function EquipoPage() {
   // Edit egreso
   const [editingEgresoId, setEditingEgresoId] = useState<string | null>(null)
   const [egresoTime, setEgresoTime] = useState('')
+  const [ingresoTime, setIngresoTime] = useState('')
+  const [ingresoOriginal, setIngresoOriginal] = useState('')
+  const [egresoOriginal, setEgresoOriginal] = useState('')
   const [egresoReason, setEgresoReason] = useState('')
   const [savingEgreso, setSavingEgreso] = useState(false)
+  const [marcandoId, setMarcandoId] = useState<string | null>(null)
+  // Motivo de ausencia (por qué no fichó)
+  const [motivoUserId, setMotivoUserId] = useState<string | null>(null)
+  const [motivoSel, setMotivoSel] = useState<MotivoAusencia | null>(null)
+  const [motivoNota, setMotivoNota] = useState('')
+  const [savingMotivo, setSavingMotivo] = useState(false)
+  const [anulandoId, setAnulandoId] = useState<string | null>(null)
 
   const isManager = profile?.role === 'socio' || profile?.role === 'encargado'
 
@@ -96,11 +118,14 @@ export default function EquipoPage() {
   const { data: employees = [], isLoading: loadingAttendance, mutate: mutateAttendance } = useSWR(
     profile && tab === 'asistencia' ? ['equipo_attendance', dateStr] : null,
     async () => {
-      const [profilesRes, attendanceRes, shiftsRes] = await Promise.all([
+      const [profilesRes, attendanceRes, shiftsRes, ausenciasRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('is_active', true).order('first_name'),
         supabase.from('attendance_logs').select('id, user_id, clock_in_at, clock_out_at, status, clock_out_type, edited_by').eq('operative_date', dateStr),
         supabase.from('shifts').select('user_id, start_time, end_time').eq('shift_date', dateStr),
+        // Solo encargados/socios pueden verlas; al resto le responde 403 y queda vacío
+        fetch(`/api/admin/ausencias?desde=${dateStr}`).then((r) => (r.ok ? r.json() : { ausencias: [] })).catch(() => ({ ausencias: [] })),
       ])
+      const ausenciaMap = new Map(((ausenciasRes.ausencias ?? []) as Ausencia[]).map((a) => [a.user_id, a]))
       const attendanceMap = new Map(
         (attendanceRes.data ?? []).map((a) => [a.user_id, a as AttendanceRecord]),
       )
@@ -116,6 +141,7 @@ export default function EquipoPage() {
             profile: p as Profile,
             attendance: attendanceMap.get(p.id) ?? null,
             hasShiftToday: !!shift,
+            ausencia: ausenciaMap.get(p.id) ?? null,
             shiftStart: shift?.start_time,
             shiftEnd: shift?.end_time,
           }
@@ -142,27 +168,33 @@ export default function EquipoPage() {
   const loading = tab === 'asistencia' ? loadingAttendance : loadingProfiles
 
   const handleSaveEgreso = async (attendanceId: string, operativeDate: string) => {
-    if (!egresoTime || savingEgreso) return
+    const cambiaIngreso = !!ingresoTime && ingresoTime !== ingresoOriginal
+    const cambiaEgreso = !!egresoTime && egresoTime !== egresoOriginal
+    if ((!cambiaEgreso && !cambiaIngreso) || savingEgreso) return
     setSavingEgreso(true)
     try {
-      const [h] = egresoTime.split(':').map(Number)
-      const baseDate = h < 6
-        ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
-        : operativeDate
-      const clockOutIso = `${baseDate}T${egresoTime}:00-03:00`
+      // Hora del día operativo → instante (antes de las 06 es el día siguiente)
+      const aIso = (hhmm: string) => {
+        const [h] = hhmm.split(':').map(Number)
+        const baseDate = h < 6
+          ? format(addDays(new Date(operativeDate + 'T12:00:00'), 1), 'yyyy-MM-dd')
+          : operativeDate
+        return `${baseDate}T${hhmm}:00-03:00`
+      }
 
       const res = await fetch('/api/admin/extend-shift', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           attendance_id: attendanceId,
-          new_clock_out: clockOutIso,
-          reason: egresoReason.trim() || 'Ajuste de egreso por encargado',
+          ...(cambiaEgreso ? { new_clock_out: aIso(egresoTime) } : {}),
+          ...(cambiaIngreso ? { new_clock_in: aIso(ingresoTime) } : {}),
+          reason: egresoReason.trim() || 'Corrección del encargado',
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Error')
-      toast.success('Egreso actualizado')
+      toast.success('Fichaje corregido')
       setEditingEgresoId(null)
       setEgresoTime('')
       setEgresoReason('')
@@ -171,6 +203,72 @@ export default function EquipoPage() {
       errorToast('No se pudo guardar el egreso', err)
     } finally {
       setSavingEgreso(false)
+    }
+  }
+
+  // El encargado marca "Llegó" a quien está trabajando y no fichó
+  const handleLlego = async (userId: string, nombre: string) => {
+    if (marcandoId) return
+    setMarcandoId(userId)
+    try {
+      const res = await fetch('/api/admin/marcar-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${nombre} marcada. Si llegó antes, corregí la hora con el lápiz.`)
+      mutateAttendance()
+    } catch (err) {
+      errorToast('No se pudo marcar la entrada', err)
+    } finally {
+      setMarcandoId(null)
+    }
+  }
+
+  // Deshace una entrada marcada por error ("Llegó" sin querer)
+  // Anota (o quita) el motivo por el que alguien con turno no fichó ese día
+  const handleMotivo = async (userId: string, quitarId?: string) => {
+    if (savingMotivo || (!quitarId && !motivoSel)) return
+    setSavingMotivo(true)
+    try {
+      const res = await fetch('/api/admin/ausencias', {
+        method: quitarId ? 'DELETE' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(quitarId ? { id: quitarId } : { user_id: userId, fecha: dateStr, motivo: motivoSel, nota: motivoNota }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(quitarId ? 'Motivo quitado' : 'Motivo anotado')
+      setMotivoUserId(null)
+      mutateAttendance()
+    } catch (err) {
+      errorToast('No se pudo guardar el motivo', err)
+    } finally {
+      setSavingMotivo(false)
+    }
+  }
+
+  const handleAnular = async (attendanceId: string, nombre: string) => {
+    if (anulandoId) return
+    if (!window.confirm(`¿Anular la entrada de ${nombre}? Se borra como si no hubiera fichado hoy.`)) return
+    setAnulandoId(attendanceId)
+    try {
+      const res = await fetch('/api/admin/anular-ingreso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance_id: attendanceId, reason: egresoReason.trim() || 'Marcada por error' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Error')
+      toast.success(`Entrada de ${nombre} anulada`)
+      setEditingEgresoId(null)
+      mutateAttendance()
+    } catch (err) {
+      errorToast('No se pudo anular la entrada', err)
+    } finally {
+      setAnulandoId(null)
     }
   }
 
@@ -191,6 +289,9 @@ export default function EquipoPage() {
   function getAttendanceStatus(ea: EmployeeAttendance) {
     if (!ea.attendance) {
       // Sin fichaje: rojo si tenía turno, gris si no
+      if (ea.hasShiftToday && ea.ausencia) {
+        return { label: ETIQUETA_AUSENCIA[ea.ausencia.motivo], color: '#3b6ab5', bg: '#eef3fb', icon: ClipboardList }
+      }
       if (ea.hasShiftToday) {
         return { label: 'Sin fichar', color: '#ea504c', bg: '#fef2f2', icon: XCircle }
       }
@@ -392,7 +493,7 @@ export default function EquipoPage() {
                         <p className="truncate text-sm font-semibold text-[#3d2c24]">
                           {ea.profile.first_name} {ea.profile.last_name}
                         </p>
-                        {getRoleBadge(ea.profile.role)}
+                        {getRoleBadge(puestoDe(ea.profile))}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-xs text-[#a39e97]">
                         {ea.hasShiftToday && ea.shiftStart && ea.shiftEnd && (
@@ -412,6 +513,8 @@ export default function EquipoPage() {
                                 : '...'}
                             </span>
                           </>
+                        ) : ea.ausencia?.nota ? (
+                          <span className="truncate italic">“{ea.ausencia.nota}”</span>
                         ) : (
                           <span>Sin registro</span>
                         )}
@@ -425,6 +528,31 @@ export default function EquipoPage() {
                         <StatusIcon className="size-3" />
                         {status.label}
                       </span>
+                      {isManager && !ea.attendance && ea.hasShiftToday && (
+                        <button
+                          onClick={() => {
+                            if (motivoUserId === ea.profile.id) { setMotivoUserId(null); return }
+                            setMotivoUserId(ea.profile.id)
+                            setMotivoSel(ea.ausencia?.motivo ?? null)
+                            setMotivoNota(ea.ausencia?.nota ?? '')
+                          }}
+                          className="rounded-lg px-2 py-1.5 text-xs font-semibold text-[#3b6ab5] hover:bg-[#eef3fb]"
+                          title="Anotar por qué no fichó"
+                        >
+                          {ea.ausencia ? 'Cambiar' : '¿Por qué?'}
+                        </button>
+                      )}
+                      {isManager && isToday && !ea.attendance && ea.hasShiftToday && !ea.ausencia && (
+                        <button
+                          onClick={() => handleLlego(ea.profile.id, ea.profile.first_name ?? '')}
+                          disabled={!!marcandoId}
+                          className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                          title="Marcarle la entrada"
+                        >
+                          {marcandoId === ea.profile.id ? <Loader2 className="size-3 animate-spin" /> : <UserCheck className="size-3.5" />}
+                          Llegó
+                        </button>
+                      )}
                       {isManager && ea.attendance && (
                         <button
                           onClick={() => {
@@ -432,32 +560,97 @@ export default function EquipoPage() {
                               setEditingEgresoId(null)
                             } else {
                               setEditingEgresoId(ea.attendance!.id)
-                              setEgresoTime(
-                                ea.attendance!.clock_out_at
-                                  ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
-                                  : '',
-                              )
+                              const egreso = ea.attendance!.clock_out_at
+                                ? format(new Date(ea.attendance!.clock_out_at), 'HH:mm')
+                                : ''
+                              setEgresoTime(egreso)
+                              setEgresoOriginal(egreso)
+                              const ingreso = format(new Date(ea.attendance!.clock_in_at), 'HH:mm')
+                              setIngresoTime(ingreso)
+                              setIngresoOriginal(ingreso)
                               setEgresoReason('')
                             }
                           }}
                           className="rounded-lg p-1.5 text-[#a39e97] hover:bg-[#f3efe9] hover:text-[#3d2c24]"
-                          title="Editar egreso"
+                          title="Corregir fichaje"
                         >
                           <Pencil className="size-3.5" />
                         </button>
                       )}
                     </div>
                   </div>
+                  {motivoUserId === ea.profile.id && !ea.attendance && (
+                    <div className="mx-3 mb-3 space-y-2 rounded-lg bg-[#faf8f5] p-3">
+                      <p className="text-xs font-medium text-[#3d2c24]">¿Por qué no fichó?</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {MOTIVOS_AUSENCIA.map((m) => (
+                          <button
+                            key={m}
+                            onClick={() => setMotivoSel(m)}
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold transition-all active:scale-95 ${
+                              motivoSel === m ? 'bg-[#3d2c24] text-white' : 'bg-white text-[#5c4a42] ring-1 ring-[#ebe6df]'
+                            }`}
+                          >
+                            {ETIQUETA_AUSENCIA[m]}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        value={motivoNota}
+                        onChange={(e) => setMotivoNota(e.target.value)}
+                        maxLength={300}
+                        placeholder="Detalle (opcional): hasta cuándo, certificado, con quién cambió…"
+                        className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                      />
+                      <div className="flex gap-2">
+                        {ea.ausencia ? (
+                          <button
+                            onClick={() => handleMotivo(ea.profile.id, ea.ausencia!.id)}
+                            disabled={savingMotivo}
+                            className="flex-1 rounded-lg border border-[#f3d0cf] py-2 text-xs font-semibold text-[#ea504c] hover:bg-white disabled:opacity-50"
+                          >
+                            Quitar
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setMotivoUserId(null)}
+                            className="flex-1 rounded-lg border border-[#ebe6df] py-2 text-xs font-semibold text-[#a39e97] hover:bg-white"
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleMotivo(ea.profile.id)}
+                          disabled={!motivoSel || savingMotivo}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {savingMotivo ? <Loader2 className="size-3 animate-spin" /> : null}
+                          Guardar
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {editingEgresoId === ea.attendance?.id && ea.attendance && (
                     <div className="mx-3 mb-3 rounded-lg bg-[#faf8f5] p-3 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium text-[#3d2c24]">Egreso:</label>
-                        <input
-                          type="time"
-                          value={egresoTime}
-                          onChange={(e) => setEgresoTime(e.target.value)}
-                          className="rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
-                        />
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="space-y-1">
+                          <span className="block text-xs font-medium text-[#3d2c24]">Entrada</span>
+                          <input
+                            type="time"
+                            value={ingresoTime}
+                            onChange={(e) => setIngresoTime(e.target.value)}
+                            className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </label>
+                        <label className="space-y-1">
+                          <span className="block text-xs font-medium text-[#3d2c24]">Salida</span>
+                          <input
+                            type="time"
+                            value={egresoTime}
+                            onChange={(e) => setEgresoTime(e.target.value)}
+                            className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-1.5 text-sm focus:border-[#006d5a] focus:outline-none focus:ring-1 focus:ring-[#006d5a]"
+                          />
+                        </label>
                       </div>
                       <input
                         value={egresoReason}
@@ -479,13 +672,23 @@ export default function EquipoPage() {
                               format(selectedDate, 'yyyy-MM-dd'),
                             )
                           }}
-                          disabled={!egresoTime || savingEgreso}
+                          disabled={((!egresoTime || egresoTime === egresoOriginal) && (!ingresoTime || ingresoTime === ingresoOriginal)) || savingEgreso}
                           className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-[#006d5a] py-2 text-xs font-semibold text-white disabled:opacity-50"
                         >
                           {savingEgreso ? <Loader2 className="size-3 animate-spin" /> : null}
                           Guardar
                         </button>
                       </div>
+                      {isToday && !ea.attendance.clock_out_at && (
+                        <button
+                          onClick={() => handleAnular(ea.attendance!.id, ea.profile.first_name ?? '')}
+                          disabled={!!anulandoId}
+                          className="flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-xs font-semibold text-[#ea504c] hover:bg-[#fef2f2] disabled:opacity-50"
+                        >
+                          {anulandoId === ea.attendance.id ? <Loader2 className="size-3 animate-spin" /> : null}
+                          Anular entrada (marcada por error)
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -573,7 +776,7 @@ export default function EquipoPage() {
                       >
                         {p.first_name} {p.last_name}
                       </p>
-                      {getRoleBadge(p.role)}
+                      {getRoleBadge(puestoDe(p))}
                       {!p.is_active && (
                         <span className="rounded-full bg-[#f3efe9] px-2 py-0.5 text-[10px] font-medium text-[#a39e97]">
                           Inactivo
@@ -601,6 +804,7 @@ export default function EquipoPage() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={() => mutateProfiles()}
+        callerRole={profile?.role as import('@/types/database').AppRole | undefined}
       />
       <EditUserDialog
         open={!!editUser}

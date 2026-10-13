@@ -67,10 +67,11 @@ export function TopBar() {
     : '?'
 
   function handleLogout() {
+    // Ir a /login recién cuando la sesión se cerró: si se va antes, el
+    // middleware ve la sesión abierta y devuelve al inicio.
     void signOutBrowserSession().finally(() => {
       window.location.href = '/login'
     })
-    setTimeout(() => { window.location.href = '/login' }, 1500)
   }
 
   const roleConfig = profile?.role ? ROLES[profile.role] : null

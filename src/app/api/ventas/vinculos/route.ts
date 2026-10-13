@@ -5,6 +5,7 @@ import { logAudit } from '@/lib/audit'
 import {
   autoVincularPlatos,
   buildVentasVinculos,
+  desvincularPlato,
   ultimaAutoVinculacion,
   type VentasVinculosPayload,
 } from '@/lib/ventas/vinculos-recetas'
@@ -15,6 +16,8 @@ import {
 //          vinculación automática si pasaron 30 min. ?resumen=1 → solo totales.
 //   POST → { menu_item_id, accion: 'receta' | 'insumo' | 'combo' | 'sin_consumo',
 //            recipe_id?, stock_item_id?, qty? }
+//   DELETE → { menu_item_id } desvincula: el plato vuelve a "sin vincular" y
+//            no se vuelve a vincular solo. No toca el stock ya descontado.
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -117,6 +120,48 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true })
   } catch (err) {
     console.error('[POST /api/ventas/vinculos]', err)
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const auth = await requireRole(['socio', 'encargado'])
+    if (auth.response) return auth.response
+
+    const body = await request.json().catch(() => null) as { menu_item_id?: string } | null
+    if (!body || !UUID.test(String(body.menu_item_id))) {
+      return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
+    }
+
+    const admin = createAdminClient()
+    const r = await desvincularPlato(admin, body.menu_item_id!)
+    if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status })
+
+    // Para el registro: a qué estaba vinculado (así se puede rehacer a mano)
+    const a = r.anterior
+    let antes = a.consumo_modo === 'combo' ? 'se contaba por lo elegido (combo)' : a.consumo_modo === 'sin_consumo' ? 'no descontaba insumos' : 'estaba vinculado'
+    if (a.recipe_id) {
+      const { data: receta } = await admin.from('recipes').select('name').eq('id', a.recipe_id).maybeSingle()
+      antes = `usaba la receta "${receta?.name ?? a.recipe_id}"`
+    } else if (a.consumo_modo === 'insumo' && a.consumo_stock_item_id) {
+      const { data: insumo } = await admin.from('stock_items').select('name, unit').eq('id', a.consumo_stock_item_id).maybeSingle()
+      antes = `descontaba ${a.consumo_qty} ${insumo?.unit ?? ''} de ${insumo?.name ?? 'un insumo'}`
+    }
+
+    const { data: perfil } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
+    const quien = [perfil?.first_name, perfil?.last_name].filter(Boolean).join(' ') || null
+    void logAudit(admin, {
+      userId: auth.user.id, userName: quien, action: 'unlink_menu_item_recipe', module: 'recetas',
+      entityType: 'menu_item', entityId: body.menu_item_id!,
+      description: `${quien ?? 'Alguien'} desvinculó "${r.name}" (${antes}). Queda sin vincular.`,
+      metadata: { anterior: a },
+    })
+
+    cache = null
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    console.error('[DELETE /api/ventas/vinculos]', err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno' }, { status: 500 })
   }
 }

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem, PulseRing } from '@/components/ui/motion'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -126,11 +127,11 @@ export default function ParaleloFudoPage() {
 
   if (loadingProfile) return null
 
-  if (profile?.role !== 'socio') {
+  if (!isManagerOrAbove(profile?.role)) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
         <ShieldAlert className="size-10 text-[#ea504c]/40" />
-        <p className="font-display text-lg font-semibold text-[#3d2c24]">Sólo socios</p>
+        <p className="font-display text-lg font-semibold text-[#3d2c24]">Solo encargados</p>
         <p className="text-sm text-[#a39e97]">
           Acá se decide cuándo LVE puede soltarle la mano a Fudo.
         </p>

@@ -42,7 +42,7 @@ type ShiftRow = {
   end_time: string
 }
 
-const TEAM_ROLES = ['encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'] as const
+const TEAM_ROLES = ['encargado', 'cajero', 'chef', 'cocina', 'barista', 'runner', 'bacha'] as const
 
 // Día operativo (corte 06:00): misma regla que al fichar
 function todayAR(): string {

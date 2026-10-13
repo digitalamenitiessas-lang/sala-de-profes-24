@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { format } from 'date-fns'
+import { toast } from 'sonner'
 import { es } from 'date-fns/locale/es'
 import {
   Clock, AlertTriangle, CheckCircle, Bell, BellOff,
@@ -33,6 +34,8 @@ type TableData = {
   total: number
   people: number | null
   createdAt: string
+  /** Hora del pedido que se espera (el más viejo sin servir) o del último si está todo servido */
+  pedidoAt?: string
   minutesOpen: number
   minutesPending: number
   semaphore: 'green' | 'yellow' | 'red' | 'critical'
@@ -141,33 +144,34 @@ export default function SalonPage() {
     setDismissed(prev => new Set(prev).add(saleId))
   }
 
-  // Mark specific item as served
-  const handleMarkItem = async (saleId: string, itemId: string) => {
+  // Marca como servidos: se ve al instante y, si no se guardó, avisa y vuelve atrás
+  const marcarServidos = async (saleId: string, itemIds: string[]) => {
+    if (itemIds.length === 0) return
+    const antes = tables
+    const ids = new Set(itemIds)
+    setTables((ts) => ts.map((t) => {
+      if (t.saleId !== saleId) return t
+      const items = t.items.map((i) => (ids.has(i.itemId) ? { ...i, served: true, minutesPending: 0 } : i))
+      const pend = items.filter((i) => !i.served)
+      return { ...t, items, itemsServed: items.length - pend.length, itemsPending: pend.length, minutesPending: pend.length ? Math.max(...pend.map((i) => i.minutesPending)) : 0, semaphore: pend.length ? t.semaphore : 'green' }
+    }))
     setMarkingServed(true)
     try {
-      await fetch('/api/salon', {
+      const res = await fetch('/api/salon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saleId, itemIds: [itemId] }),
+        body: JSON.stringify({ saleId, itemIds }),
       })
-      fetchData()
-    } catch { /* silent */ }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Error')
+      void fetchData()
+    } catch {
+      setTables(antes)
+      toast.error('No se pudo marcar como servido. Revisá la conexión y probá de nuevo.')
+    }
     setMarkingServed(false)
   }
-
-  // Mark ALL items as served for a sale
-  const handleMarkAllServed = async (saleId: string) => {
-    setMarkingServed(true)
-    try {
-      await fetch('/api/salon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ saleId, allServed: true }),
-      })
-      fetchData()
-    } catch { /* silent */ }
-    setMarkingServed(false)
-  }
+  const handleMarkItem = (saleId: string, itemId: string) => marcarServidos(saleId, [itemId])
+  const handleMarkAllServed = (table: TableData) => marcarServidos(table.saleId, table.items.filter((i) => !i.served).map((i) => i.itemId))
 
   if (profileLoading || loading) {
     return <div className="flex min-h-[50vh] items-center justify-center"><Loader2 className="size-6 animate-spin text-[#a39e97]" /></div>
@@ -324,7 +328,7 @@ export default function SalonPage() {
                       <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#a39e97]">
                         <span>{formatPrice(table.total)}</span>
                         <span>· {table.itemsServed}/{table.itemsTotal} servidos</span>
-                        <span>· {format(new Date(table.createdAt), 'HH:mm')}</span>
+                        <span>· {allServed ? 'último pedido' : 'pidió'} {format(new Date(table.pedidoAt ?? table.createdAt), 'HH:mm')}</span>
                       </div>
                     </div>
 
@@ -373,6 +377,7 @@ export default function SalonPage() {
                               <p className={`text-sm ${item.served ? 'line-through text-[#a39e97]' : 'font-medium text-[#3d2c24]'}`}>
                                 {item.name} {item.qty > 1 ? `x${item.qty}` : ''}
                               </p>
+                              {item.createdAt && <p className="text-[10px] text-[#a39e97]">pedido {format(new Date(item.createdAt), 'HH:mm')}</p>}
                             </div>
 
                             {/* Time */}
@@ -395,7 +400,7 @@ export default function SalonPage() {
                       {table.itemsPending > 0 && (
                         <div className="p-3">
                           <button
-                            onClick={() => handleMarkAllServed(table.saleId)}
+                            onClick={() => handleMarkAllServed(table)}
                             disabled={markingServed}
                             className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-2.5 text-xs font-bold text-white active:scale-[0.98] disabled:opacity-50"
                           >

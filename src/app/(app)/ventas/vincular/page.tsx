@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { ArrowLeft, Ban, CheckCheck, Layers, Loader2, Package, Search, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, Ban, CheckCheck, ChevronDown, Layers, Link2Off, Loader2, Package, Search, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { isManagerOrAbove } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
-import type { PlatoPendiente, VentasVinculosPayload } from '@/lib/ventas/vinculos-recetas'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import type { PlatoPendiente, PlatoVinculado, VentasVinculosPayload } from '@/lib/ventas/vinculos-recetas'
 
 // ---------------------------------------------------------------------------
 // Platos sin receta — para que cada venta descuente lo que consume
@@ -15,6 +16,7 @@ import type { PlatoPendiente, VentasVinculosPayload } from '@/lib/ventas/vinculo
 // Lo que se llama igual que un plato del salón (versiones PedidosYa) o que un
 // insumo con tamaño ("Leche Entera 190 ML") se vincula solo. Acá queda solo lo
 // que necesita una persona. Cuando no queda nada, el aviso deja de mostrarse.
+// Abajo, "Ya vinculados": para revisar y desvincular un vínculo mal hecho.
 // ---------------------------------------------------------------------------
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('es-AR')}`
@@ -37,9 +39,9 @@ export default function PlatosSinRecetaPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (fresh = false) => {
     try {
-      const res = await fetch('/api/ventas/vinculos', { cache: 'no-store' })
+      const res = await fetch(`/api/ventas/vinculos${fresh ? '?fresh=1' : ''}`, { cache: 'no-store' })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? 'No se pudo cargar')
       setData(json)
@@ -61,10 +63,20 @@ export default function PlatosSinRecetaPage() {
     setData((d) => {
       if (!d) return d
       const pend = d.resumen.revenue_pendiente - p.revenue
+      const nuevo: PlatoVinculado = {
+        menu_item_id: p.menu_item_id,
+        name: p.name,
+        modo: a.accion,
+        destino: a.accion === 'receta' || a.accion === 'insumo' ? a.label : null,
+        origen: 'manual',
+        units: p.tipo === 'plato' ? p.units : 0,
+        revenue: p.revenue,
+      }
       return {
         ...d,
         pendientes: d.pendientes.filter((x) => x.menu_item_id !== p.menu_item_id),
         opciones: d.opciones.filter((x) => x.menu_item_id !== p.menu_item_id),
+        vinculados: [nuevo, ...(d.vinculados ?? []).filter((x) => x.menu_item_id !== p.menu_item_id)],
         resumen: {
           ...d.resumen,
           revenue_pendiente: pend,
@@ -89,6 +101,23 @@ export default function PlatosSinRecetaPage() {
     } catch (err) {
       setData(snapshot)
       toast.error(err instanceof Error ? err.message : 'No se pudo guardar')
+    }
+  }
+
+  async function desvincular(v: PlatoVinculado) {
+    try {
+      const res = await fetch('/api/ventas/vinculos', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ menu_item_id: v.menu_item_id }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(json.error ?? 'No se pudo desvincular')
+      toast.success(`${v.name}: quedó sin vincular`)
+      // Recarga sin caché: vuelve a la lista de pendientes con sus sugerencias
+      await load(true)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo desvincular')
     }
   }
 
@@ -157,9 +186,98 @@ export default function PlatosSinRecetaPage() {
               )}
             </>
           )}
+
+          {(data.vinculados?.length ?? 0) > 0 && <YaVinculados vinculados={data.vinculados} days={data.days} onDesvincular={desvincular} />}
         </>
       )}
     </div>
+  )
+}
+
+const MODO_LABEL: Record<PlatoVinculado['modo'], string> = {
+  receta: 'Receta',
+  insumo: 'Insumo',
+  combo: 'Por lo elegido (combo)',
+  sin_consumo: 'No usa insumos',
+}
+const ORIGEN_LABEL: Record<string, string> = {
+  manual: 'a mano',
+  auto_nombre: 'solo, por nombre',
+  importacion: 'de la importación',
+}
+
+function YaVinculados({ vinculados, days, onDesvincular }: {
+  vinculados: PlatoVinculado[]
+  days: number
+  onDesvincular: (v: PlatoVinculado) => Promise<void>
+}) {
+  const [abierto, setAbierto] = useState(false)
+  const [q, setQ] = useState('')
+  const lista = useMemo(() => {
+    const n = fold(q.trim())
+    return (n ? vinculados.filter((v) => fold(v.name).includes(n) || fold(v.destino ?? '').includes(n)) : vinculados).slice(0, 80)
+  }, [q, vinculados])
+
+  return (
+    <section className="space-y-2">
+      <button onClick={() => setAbierto((x) => !x)} className="flex w-full items-center justify-between gap-2 text-left">
+        <span>
+          <span className="block text-[13px] font-bold text-[#3d2c24]">Ya vinculados ({vinculados.length})</span>
+          <span className="block text-[11.5px] text-[#a39e97]">Si alguno quedó mal, desvinculalo y vuelve a la lista de arriba.</span>
+        </span>
+        <ChevronDown className={`size-4 shrink-0 text-[#a39e97] transition ${abierto ? 'rotate-180' : ''}`} />
+      </button>
+
+      {abierto && (
+        <>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#a39e97]" />
+            <input
+              placeholder="Buscar plato, receta o insumo…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-8 pr-2 text-[13px] text-[#3d2c24] outline-none focus:border-[#006d5a]"
+            />
+          </div>
+          <div className="divide-y divide-[#f3efe9] rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
+            {lista.map((v) => (
+              <div key={v.menu_item_id} className="flex items-center gap-2 px-3.5 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-[#3d2c24]">{v.name}</p>
+                  <p className="truncate text-[11.5px] text-[#7d6c64]">
+                    {MODO_LABEL[v.modo]}{v.destino && <>: <b className="font-medium text-[#3d2c24]">{v.destino}</b></>}
+                  </p>
+                  <p className="text-[10.5px] text-[#a39e97]">
+                    {v.origen && ORIGEN_LABEL[v.origen] ? `Vinculado ${ORIGEN_LABEL[v.origen]}` : 'Vinculado'}
+                    {v.units > 0 && <> · {num(v.units)} vendidos en {days} días</>}
+                  </p>
+                </div>
+                <ConfirmDialog
+                  variant="danger"
+                  title={`¿Desvincular "${v.name}"?`}
+                  description={
+                    'Vuelve a la lista de platos sin vincular y no se vincula solo de nuevo. '
+                    + 'Desde ahora sus ventas no descuentan insumos hasta que lo vuelvas a vincular. '
+                    + 'Lo que ya se descontó por ventas anteriores no se cambia.'
+                  }
+                  confirmLabel="Desvincular"
+                  onConfirm={() => onDesvincular(v)}
+                  trigger={
+                    <button className="flex shrink-0 items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11.5px] font-medium text-[#ea504c] ring-1 ring-[#f5d0cf] hover:bg-[#fef2f2]">
+                      <Link2Off className="size-3.5" /> Desvincular
+                    </button>
+                  }
+                />
+              </div>
+            ))}
+            {lista.length === 0 && <p className="py-4 text-center text-[12px] text-[#a39e97]">Sin resultados</p>}
+          </div>
+          {!q && vinculados.length > lista.length && (
+            <p className="text-center text-[11px] text-[#a39e97]">Mostrando los {lista.length} más vendidos. Buscá para ver el resto.</p>
+          )}
+        </>
+      )}
+    </section>
   )
 }
 

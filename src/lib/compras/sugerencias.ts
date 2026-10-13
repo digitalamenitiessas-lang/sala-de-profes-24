@@ -56,6 +56,8 @@ export type SugerenciaCompra = {
   last_ordered_at: string | null
   /** Última compra REAL (gasto Fudo mono-insumo): monto total del gasto, no precio unitario. */
   last_purchase: { amount: number; date: string } | null
+  /** Fecha en que se marcó "no vino" si fue lo último que pasó con este insumo (queda pendiente de volver a pedir) */
+  no_vino_at: string | null
 }
 
 export type SugerenciasPorProveedor = {
@@ -233,7 +235,7 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
   }
   const items = (itemsRes.data ?? []) as unknown as ItemRow[]
 
-  const [{ data: suppliers }, consumption, { data: openOrders }, barOrdersRes, gastosFudo] = await Promise.all([
+  const [{ data: suppliers }, consumption, { data: openOrders }, barOrdersRes, gastosFudo, noVinoPendiente] = await Promise.all([
     admin.from('suppliers').select('id, name, phone, contact_name, order_days, lead_time_days').eq('is_active', true),
     computeConsumption(admin),
     admin.from('kitchen_orders').select('stock_item_id, product_name, status').in('status', ['pending', 'ordered']),
@@ -250,6 +252,7 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
         ])
       } catch { return [] }
     })(),
+    cargarNoVinoPendiente(admin),
   ])
 
   type Sup = { id: string; name: string; phone: string | null; contact_name: string | null; order_days: number[] | null; lead_time_days: number | null }
@@ -305,11 +308,16 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
     const coverage = sup ? daysUntilNextDelivery(sup.order_days, todayDow, sup.lead_time_days) : null
     const horizon = coverage ?? 7
 
+    const yaPedido = orderedIds.has(it.id) || orderedNames.has(it.name.trim().toLowerCase())
+    // "No vino" en el último pedido y no se volvió a pedir: queda pendiente
+    const noVino = yaPedido ? null : noVinoPendiente.get(it.id) ?? null
+
     let reason: SugerenciaCompra['reason'] | null = null
     if (qty < 0) reason = 'negativo'
     else if (qty === 0 && (min > 0 || daily)) reason = 'sin_stock'
     else if (min > 0 && qty <= min * 1.2) reason = 'bajo_minimo'
     else if (daysLeft !== null && daysLeft <= horizon + 1) reason = 'se_acaba'
+    else if (noVino) reason = 'reponer'
     if (!reason) continue
 
     let suggested: number
@@ -320,8 +328,12 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
     } else {
       suggested = 0
     }
+    // Lo que se había pedido y no vino, si está en la misma unidad del stock
+    const qtyNoVino = noVino ? cantidadEnUnidad(noVino.cantidad, it.unit) : null
+    if (qtyNoVino !== null && qtyNoVino > suggested) suggested = qtyNoVino
     if (suggested <= 0) {
       if (reason === 'negativo' || reason === 'sin_stock') suggested = Math.max(1, Math.ceil(min || 1))
+      else if (noVino) suggested = Math.max(1, Math.ceil(min || 1))
       else continue
     }
 
@@ -331,9 +343,11 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
         ? 'Sin stock'
         : reason === 'bajo_minimo'
           ? `${qty} ${it.unit} · mínimo ${min}`
-          : daysLeft !== null
-            ? `Te quedan ~${Math.round(daysLeft * 10) / 10} días al ritmo actual`
-            : 'Reponer'
+          : reason === 'reponer'
+            ? 'No vino en el último pedido'
+            : daysLeft !== null
+              ? `Te quedan ~${Math.round(daysLeft * 10) / 10} días al ritmo actual`
+              : 'Reponer'
 
     // Decisión de producto (Marco): el costo espejado de Fudo NO es real.
     // Solo se estima plata con fuentes confiables (compra/manual/produccion).
@@ -359,9 +373,10 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
       supplier_name: sup?.name ?? null,
       supplier_phone: sup?.phone ?? null,
       is_order_day: Boolean(sup?.order_days?.includes(todayDow)),
-      already_ordered: orderedIds.has(it.id) || orderedNames.has(it.name.trim().toLowerCase()),
+      already_ordered: yaPedido,
       last_ordered_at: it.last_ordered_at,
       last_purchase: lastPurchaseByItem.get(it.id) ?? null,
+      no_vino_at: noVino?.at ?? null,
     })
   }
 
@@ -409,4 +424,52 @@ export async function generarSugerenciasCompra(admin: SupabaseClient): Promise<S
     total_items: suggestions.length,
     total_estimated_cost: round2(groups.reduce((s, g) => s + g.estimated_cost, 0)),
   }
+}
+
+/**
+ * Insumos cuyo ÚLTIMO pedido (últimos 14 días) terminó en "no vino": el stock
+ * no subió y conviene volver a pedirlos. Si después llegó otro pedido del
+ * mismo insumo, ya no cuenta. Best-effort: si falla, sin marca.
+ */
+async function cargarNoVinoPendiente(admin: SupabaseClient): Promise<Map<string, { at: string; cantidad: string | null }>> {
+  const out = new Map<string, { at: string; cantidad: string | null }>()
+  try {
+    const since = new Date(Date.now() - WINDOW_DAYS * 86_400_000).toISOString()
+    type Fila = { stock_item_id: string | null; status: string; received_mode: string | null; received_at: string | null; quantity: string | null }
+    const filas: Fila[] = []
+    for (const table of ['kitchen_orders', 'bar_orders'] as const) {
+      const { data, error } = await admin
+        .from(table)
+        .select('stock_item_id, status, received_mode, received_at, quantity')
+        .in('status', ['received', 'cancelled'])
+        .not('stock_item_id', 'is', null)
+        .gte('received_at', since)
+      if (error) continue
+      filas.push(...((data ?? []) as Fila[]))
+    }
+    filas.sort((a, b) => (b.received_at ?? '').localeCompare(a.received_at ?? ''))
+    const visto = new Set<string>()
+    for (const f of filas) {
+      if (!f.stock_item_id || visto.has(f.stock_item_id)) continue
+      // Un 'cancelled' sin received_at no llega acá (filtro gte); uno con
+      // received_at pero sin 'no_vino' no debería existir: se ignora.
+      if (f.status === 'cancelled' && f.received_mode !== 'no_vino') continue
+      visto.add(f.stock_item_id)
+      if (f.status === 'cancelled' && f.received_mode === 'no_vino' && f.received_at) {
+        out.set(f.stock_item_id, { at: f.received_at, cantidad: f.quantity })
+      }
+    }
+  } catch { /* sin marca */ }
+  return out
+}
+
+/** "18 kg" con unidad de stock "kg" → 18. Si la unidad no coincide (o no hay número), null. */
+function cantidadEnUnidad(cantidad: string | null, unidad: string): number | null {
+  const m = String(cantidad ?? '').trim().match(/^(\d+(?:[.,]\d+)?)\s*(.*)$/)
+  if (!m) return null
+  const n = parseFloat(m[1].replace(',', '.'))
+  const resto = m[2].trim().toLowerCase()
+  if (!(n > 0)) return null
+  if (resto !== '' && resto !== unidad.trim().toLowerCase()) return null
+  return round2(n)
 }

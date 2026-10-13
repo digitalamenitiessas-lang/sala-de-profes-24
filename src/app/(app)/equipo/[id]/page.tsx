@@ -7,9 +7,10 @@ import { ChevronLeft, Loader2, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { createClient } from '@/lib/supabase/client'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, ENCARGADO_MANAGED_ROLES, puestoDe } from '@/lib/roles'
 import type { AppRole } from '@/types/database'
 import { ROLES } from '@/lib/constants'
+import { UserAccessCard } from '@/components/equipo/UserAccessCard'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -39,7 +40,7 @@ type EmployeeData = {
   emergency_contact_phone: string | null
 }
 
-const ALL_ROLES: AppRole[] = ['socio', 'encargado', 'chef', 'barista', 'runner', 'cocina', 'bacha']
+const ALL_ROLES: AppRole[] = ['socio', 'encargado', 'cajero', 'chef', 'barista', 'runner', 'cocina', 'bacha']
 
 // ---------------------------------------------------------------------------
 // Page
@@ -75,7 +76,7 @@ export default function EmpleadoFichaPage() {
       const { data, error } = await supabase
         .from('profiles')
         .select(
-          'id, first_name, last_name, phone, role, avatar_url, is_active, cuit, address, dni, birth_date, emergency_contact_name, emergency_contact_phone',
+          'id, first_name, last_name, phone, role, puesto, avatar_url, is_active, cuit, address, dni, birth_date, emergency_contact_name, emergency_contact_phone',
         )
         .eq('id', id)
         .single()
@@ -90,7 +91,7 @@ export default function EmpleadoFichaPage() {
       setFirstName(data.first_name ?? '')
       setLastName(data.last_name ?? '')
       setPhone(data.phone ?? '')
-      setRole(data.role as AppRole)
+      setRole(puestoDe(data))
       setIsActive(data.is_active)
       setCuit(data.cuit ?? '')
       setDni(data.dni ?? '')
@@ -170,6 +171,12 @@ export default function EmpleadoFichaPage() {
   }
 
   const roleColor = ROLES[employee.role]?.color ?? '#a39e97'
+  // El encargado asigna de encargado para abajo; a un socio no le cambia el rol
+  const callerIsEncargado = myProfile?.role === 'encargado'
+  const roleLocked = callerIsEncargado && employee.role === 'socio'
+  const roleOptions = callerIsEncargado && !roleLocked
+    ? ALL_ROLES.filter((r) => ENCARGADO_MANAGED_ROLES.includes(r))
+    : ALL_ROLES
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-10">
@@ -253,9 +260,11 @@ export default function EmpleadoFichaPage() {
             <select
               value={role}
               onChange={(e) => setRole(e.target.value as AppRole)}
-              className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-2 text-sm text-[#3d2c24] outline-none focus:border-[#006d5a] focus:ring-1 focus:ring-[#006d5a]"
+              disabled={roleLocked}
+              title={roleLocked ? 'El rol de un socio lo cambia otro socio' : undefined}
+              className="w-full rounded-xl border border-[#ebe6df] bg-[#faf8f5] px-3 py-2 text-sm text-[#3d2c24] outline-none focus:border-[#006d5a] focus:ring-1 focus:ring-[#006d5a] disabled:opacity-60"
             >
-              {ALL_ROLES.map((r) => (
+              {roleOptions.map((r) => (
                 <option key={r} value={r}>
                   {r.charAt(0).toUpperCase() + r.slice(1)}
                 </option>
@@ -277,6 +286,9 @@ export default function EmpleadoFichaPage() {
           </div>
         </div>
       </div>
+
+      {/* Email y contraseña (se guarda aparte de la ficha) */}
+      <UserAccessCard userId={employee.id} />
 
       {/* Personal data */}
       <div className="rounded-2xl bg-white px-5 py-5 shadow-sm ring-1 ring-[#ebe6df] space-y-4">

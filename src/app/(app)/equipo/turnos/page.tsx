@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isManagerOrAbove, puestoDe } from '@/lib/roles'
 import { format, startOfWeek, endOfWeek, addWeeks, subWeeks, eachDayOfInterval } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import Link from 'next/link'
@@ -110,9 +110,10 @@ export default function EquipoTurnosPage() {
 
   useEffect(() => {
     if (!isEncargado) return
-    supabase.from('profiles').select('id, first_name, last_name, role').eq('is_active', true).order('first_name')
+    supabase.from('profiles').select('id, first_name, last_name, role, puesto').eq('is_active', true).order('first_name')
       .then(({ data, error }) => {
-        if (!error) setEmployees(data ?? [])
+        // Grilla y turnos nuevos con el puesto (el cajero tiene rol encargado)
+        if (!error) setEmployees((data ?? []).map((e) => ({ ...e, role: puestoDe(e) })))
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEncargado])
