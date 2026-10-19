@@ -7,6 +7,6 @@ export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'anthropic/claud
 
 // Encabezados que OpenRouter usa para identificar la app en su panel.
 export const OPENROUTER_APP_HEADERS = {
-  'HTTP-Referer': 'https://sala-de-profes-24.vercel.app',
+  'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'https://sala-de-profes-24.vercel.app',
   'X-Title': 'Sala de Profes 24',
 } as const

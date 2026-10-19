@@ -34,7 +34,9 @@ export async function GET() {
 
     // Try to get FUDO ventas
     try {
-      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3007'
+      // URL pública de la app (VPS: NEXT_PUBLIC_APP_URL; Vercel: VERCEL_URL)
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
       const ventasRes = await fetch(`${baseUrl}/api/fudo/auto-sync`, {
         headers: { 'x-internal-call': process.env.CRON_SECRET ?? '' },
       })
