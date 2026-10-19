@@ -3,7 +3,7 @@
 -- Antes el cierre corría una vez por día (16:00): un fichaje olvidado quedaba
 -- "abierto" hasta 16 horas mostrando horas de más.
 -- Reusa el secreto cron_secret_protocolos de Vault (protocolos_reloj.sql).
--- La URL apunta a la app de la sucursal 24 (sala-de-profes-24.vercel.app).
+-- La URL apunta a la app de la sucursal 24 (salaprofes24.2-25-185-242.sslip.io).
 -- Reemplaza al reloj 'auto-clockout' de la 24 (cada hora, auto_clockout_reloj.sql):
 -- se borra para que la misma ruta no corra con dos relojes.
 -- ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ select cron.schedule(
   '*/15 * * * *',
   $$
   select net.http_get(
-    url := 'https://sala-de-profes-24.vercel.app/api/cron/auto-clockout',
+    url := 'https://salaprofes24.2-25-185-242.sslip.io/api/cron/auto-clockout',
     headers := jsonb_build_object(
       'Authorization',
       'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')

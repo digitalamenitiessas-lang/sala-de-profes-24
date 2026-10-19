@@ -4,12 +4,12 @@
 --   fudo-pulso          cada 10 min: conexión, reintentos, ventas, stock, menú
 --   fudo-sync-reintento 07:45 UTC (04:45 AR): repite el nocturno si falló
 -- También alarga la espera del reloj de protocolos (antes 5 s por defecto).
--- La URL ya apunta a la app de la sucursal 24 (sala-de-profes-24.vercel.app).
+-- La URL ya apunta a la app de la sucursal 24 (salaprofes24.2-25-185-242.sslip.io).
 -- Correr después de protocolos_reloj.sql (usa el mismo secreto de Vault).
 -- ---------------------------------------------------------------------------
 select cron.schedule('fudo-pulso', '*/10 * * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-24.vercel.app/api/cron/fudo-pulso',
+    url := 'https://salaprofes24.2-25-185-242.sslip.io/api/cron/fudo-pulso',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 120000
   );
@@ -17,7 +17,7 @@ $$);
 
 select cron.schedule('fudo-sync-reintento', '45 7 * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-24.vercel.app/api/cron/fudo-sync?si_fallo=1',
+    url := 'https://salaprofes24.2-25-185-242.sslip.io/api/cron/fudo-sync?si_fallo=1',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 300000
   );
@@ -25,7 +25,7 @@ $$);
 
 select cron.schedule('protocolos-avisos', '*/5 * * * *', $$
   select net.http_get(
-    url := 'https://sala-de-profes-24.vercel.app/api/cron/protocolos',
+    url := 'https://salaprofes24.2-25-185-242.sslip.io/api/cron/protocolos',
     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')),
     timeout_milliseconds := 60000
   );

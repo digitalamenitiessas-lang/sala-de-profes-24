@@ -197,3 +197,34 @@ por Telegram, etc.), conservando todas las adaptaciones de la 24.
   a un socio solo lo desactiva otro socio). Los nuevos se dan de alta desde *Equipo → Nuevo*.
 - Si alguien cambia la contraseña en una app, en la otra no cambia (son cuentas separadas).
 - Falta: **cargar los turnos** (sin turno no se puede fichar) y reactivar los protocolos.
+
+## 10. Mudanza de Vercel a la VPS (19/10)
+
+Vercel dio de baja el plan gratis (402 DEPLOYMENT_DISABLED). La app ahora corre en la VPS del equipo,
+con el mismo esquema que Casa Fe, Citify y Malala. La base sigue en Supabase.
+
+| | |
+|---|---|
+| **Dirección provisoria** | https://salaprofes24.2-25-185-242.sslip.io |
+| Servidor | `root@2.25.185.242` (Ubuntu 24.04, 1 núcleo, 3,8 GB) |
+| Usuario / código | `salaprofes24` (sin shell) · `/home/salaprofes24/sala-de-profes-24` (clon, rama `main`) |
+| Variables | `/etc/salaprofes24/app.env` (640 root:salaprofes24). **No** tiene `LVE_DB_URL` ni `SUPABASE_DB_URL` (la app no las usa) |
+| Servicio | `salaprofes24.service` → `next start -H 127.0.0.1 -p 3070` · Nice=10 · MemoryMax=1G · Restart=always |
+| Caddy | `/etc/caddy/salaprofes24.caddy` (import al final del Caddyfile) |
+| Crons | `/etc/cron.d/salaprofes24` (los 12 de vercel.json, a 127.0.0.1:3070) · secreto en `/etc/salaprofes24/cron.curlrc` (600) · log `/var/log/salaprofes24-cron.log` |
+| Relojes de Supabase | Los 7 de pg_cron apuntan a la dirección provisoria |
+
+**Deploy (reemplaza a Vercel):** con `main` pusheado, `bash scripts/deploy-vps.sh`. La VPS no tiene
+acceso al repo privado: el script lleva el código como `git bundle`. Para que la VPS pueda hacer
+`git pull` sola, el **dueño del repo** (`digitalamenitiessas-lang`) tiene que agregar una *deploy key*
+de solo lectura (no usar la de `sala-de-profes-LVE` que está en `/root/.ssh`).
+
+**Falta (vos):**
+- Supabase → *Authentication → URL Configuration*: Site URL `https://salaprofes24.2-25-185-242.sslip.io`
+  y Redirect URLs `https://salaprofes24.2-25-185-242.sslip.io/**` (para "Olvidé mi contraseña").
+- Avisar al equipo la **dirección nueva**: los que tenían la app instalada desde `sala-de-profes-24.vercel.app`
+  la tienen que volver a instalar y **reactivar las notificaciones** (los avisos dependen de la dirección).
+- **Dominio propio:** cuando lo haya, se agrega como primer nombre del bloque de Caddy, se actualiza
+  `NEXT_PUBLIC_APP_URL` en `app.env` (y se recompila: es `NEXT_PUBLIC_*`), los relojes de pg_cron y la
+  Site URL de Supabase.
+- La VPS está en EE. UU. y la base en San Pablo: cada consulta tarda un poco más que en Vercel.

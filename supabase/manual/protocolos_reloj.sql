@@ -3,7 +3,7 @@
 -- Correr UNA vez en Supabase → SQL Editor (proyecto de Sala de Profes).
 -- Reemplazar PEGAR_ACA_EL_CRON_SECRET por el valor de CRON_SECRET que está
 -- en Vercel → Settings → Environment Variables (queda guardado cifrado en Vault).
--- La URL ya apunta a la app de la sucursal 24 (sala-de-profes-24.vercel.app).
+-- La URL ya apunta a la app de la sucursal 24 (salaprofes24.2-25-185-242.sslip.io).
 -- ---------------------------------------------------------------------------
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
@@ -15,7 +15,7 @@ select cron.schedule(
   '*/5 * * * *',
   $$
   select net.http_get(
-    url := 'https://sala-de-profes-24.vercel.app/api/cron/protocolos',
+    url := 'https://salaprofes24.2-25-185-242.sslip.io/api/cron/protocolos',
     headers := jsonb_build_object(
       'Authorization',
       'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'cron_secret_protocolos')
