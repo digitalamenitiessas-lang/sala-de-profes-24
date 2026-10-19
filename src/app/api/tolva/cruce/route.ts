@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { requireRole } from '@/lib/supabase/require-role'
+import { fechaOperativa } from '@/lib/attendance/jornada'
 
 // ---------------------------------------------------------------------------
 // GET /api/tolva/cruce?dias=14
@@ -8,7 +10,7 @@ import { createClient } from '@/lib/supabase/server'
 // las ventas de café del mismo turno, para detectar desfasajes.
 //
 // Flujo de identificación de "café":
-//   stock_items (name ILIKE '%café%', unit kg/g)
+//   stock_items (name ILIKE '%café%' o '%cafe%', unit kg/g)
 //     → recipe_ingredients (stock_item_id)
 //     → menu_items (recipe_id → fudo_product_id)
 //     → fudo_consumo (fudo_product_id, sold_at en ventana del turno)
@@ -16,9 +18,10 @@ import { createClient } from '@/lib/supabase/server'
 // Si no se encuentran productos por receta, cae al fallback por nombre de
 // menu_items (café, espresso, cortado, latte, cappuccino).
 //
-// Ventanas de turno en hora AR (UTC-3):
+// Ventanas de turno en hora AR (UTC-3), por día operativo (corte 06:00):
 //   TM: 06:00 – 16:00 (hora AR) → 09:00 – 19:00 UTC
 //   TT: 16:00 – 06:00 siguiente  → 19:00 – 09:00 UTC next day
+// Lo vendido entre 00:00 y 06:00 es TT del día anterior, no TM del día.
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -46,15 +49,15 @@ export type CruceResponse = {
 }
 
 export async function GET(request: NextRequest) {
+  // Solo socios: es info de gestión (la pantalla ya lo limita, la API también)
+  const auth = await requireRole(['socio'])
+  if (auth.response) return auth.response
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const dias = Math.min(30, Math.max(1, Number(request.nextUrl.searchParams.get('dias') ?? 14)))
 
-  const desdeAR = new Date()
-  desdeAR.setDate(desdeAR.getDate() - dias)
-  const desdeStr = desdeAR.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+  // Día operativo AR de hace `dias` días (corte 06:00, como los turnos)
+  const desdeStr = fechaOperativa(new Date(Date.now() - dias * 86_400_000))
 
   // ---- Tolva logs ----
   const { data: tolvaLogs } = await supabase
@@ -67,19 +70,22 @@ export async function GET(request: NextRequest) {
   if (!tolvaLogs?.length) return NextResponse.json({ rows: [], gr_por_cafe: GR_POR_CAFE_DEFAULT } satisfies CruceResponse)
 
   // ---- Identificar productos de café ----
-  let cafeProductIds = new Set<string>()
+  const cafeProductIds = new Set<string>()
   let grPorCafe = GR_POR_CAFE_DEFAULT
 
   // Primero: vía stock_item de café → recipe_ingredients → menu_items
   const { data: cafeItems } = await supabase
     .from('stock_items')
-    .select('id, unit')
-    .ilike('name', '%café%')
+    .select('id, name, unit')
+    .or('name.ilike.%café%,name.ilike.%cafe%') // con y sin tilde
     .eq('is_active', true)
+    .order('name')
 
-  const cafeItem = ((cafeItems ?? []) as { id: string; unit: string }[]).find((si) =>
-    ['kg', 'g'].includes(si.unit),
-  )
+  // Primero los que empiezan con "café" (no "Azúcar para café")
+  const empiezaConCafe = (n: string) => /^caf[eé]/i.test(n.trim()) ? 0 : 1
+  const cafeItem = ((cafeItems ?? []) as { id: string; name: string; unit: string }[])
+    .filter((si) => ['kg', 'g'].includes(si.unit))
+    .sort((a, b) => empiezaConCafe(a.name) - empiezaConCafe(b.name))[0]
 
   if (cafeItem) {
     const { data: ris } = await supabase
@@ -87,7 +93,7 @@ export async function GET(request: NextRequest) {
       .select('recipe_id, qty_per_portion, ingredient_unit')
       .eq('stock_item_id', cafeItem.id)
 
-    const recipeIds = [...new Set(((ris ?? []) as { recipe_id: number }[]).map((r) => r.recipe_id))]
+    const recipeIds = [...new Set(((ris ?? []) as { recipe_id: string }[]).map((r) => r.recipe_id))]
 
     // Calcular gramos promedio por porción desde la receta
     const qtysGr = ((ris ?? []) as { qty_per_portion: number | null; ingredient_unit: string | null }[])
@@ -118,7 +124,7 @@ export async function GET(request: NextRequest) {
     const { data: mis } = await supabase
       .from('menu_items')
       .select('fudo_product_id')
-      .or('name.ilike.%café%,name.ilike.%espresso%,name.ilike.%cortado%,name.ilike.%latte%,name.ilike.%cappuccino%')
+      .or('name.ilike.%café%,name.ilike.%cafe%,name.ilike.%espresso%,name.ilike.%cortado%,name.ilike.%latte%,name.ilike.%cappuccino%')
       .not('fudo_product_id', 'is', null)
     for (const mi of (mis ?? []) as { fudo_product_id: string }[]) {
       cafeProductIds.add(mi.fudo_product_id)
@@ -141,19 +147,31 @@ export async function GET(request: NextRequest) {
   }
 
   // ---- Ventas de café en el período ----
-  const { data: consumo } = await supabase
-    .from('fudo_consumo')
-    .select('fudo_product_id, quantity, sold_at')
-    .in('fudo_product_id', [...cafeProductIds])
-    .gte('sold_at', `${desdeStr}T09:00:00Z`) // desde el primer TM del período
+  // Paginado: PostgREST corta en 1000 filas sin avisar (orden estable sold_at + id)
+  type ConsumoRow = { fudo_product_id: string; quantity: number | null; sold_at: string }
+  const consumo: ConsumoRow[] = []
+  for (let page = 0; page < 50; page++) {
+    const { data, error } = await supabase
+      .from('fudo_consumo')
+      .select('fudo_product_id, quantity, sold_at')
+      .in('fudo_product_id', [...cafeProductIds])
+      .gte('sold_at', `${desdeStr}T09:00:00Z`) // desde el primer TM del período (06:00 AR)
+      .order('sold_at', { ascending: true })
+      .order('id', { ascending: true })
+      .range(page * 1000, page * 1000 + 999)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!data || data.length === 0) break
+    consumo.push(...(data as ConsumoRow[]))
+    if (data.length < 1000) break
+  }
 
-  // Agrupar por (fecha AR, turno)
+  // Agrupar por (día operativo AR, turno): TM = 06:00–16:00 AR, TT = el resto
   const ventasByKey = new Map<string, number>()
-  for (const c of (consumo ?? []) as { fudo_product_id: string; quantity: number | null; sold_at: string }[]) {
-    const arDate = new Date(new Date(c.sold_at).toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
-    const dateKey = arDate.toLocaleDateString('en-CA')
-    const shift = arDate.getHours() < 16 ? 'TM' : 'TT'
-    const key = `${dateKey}:${shift}`
+  for (const c of consumo) {
+    const d = new Date(c.sold_at)
+    const horaAR = new Date(d.getTime() - 3 * 3_600_000).getUTCHours() // AR = UTC-3, sin horario de verano
+    const shift = horaAR >= 6 && horaAR < 16 ? 'TM' : 'TT'
+    const key = `${fechaOperativa(d)}:${shift}`
     ventasByKey.set(key, (ventasByKey.get(key) ?? 0) + Number(c.quantity ?? 1))
   }
 

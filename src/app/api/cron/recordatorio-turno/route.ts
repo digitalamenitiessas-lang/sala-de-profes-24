@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sendPushToUser } from '@/lib/push/send'
 import { getNotificationSettings } from '@/lib/push/notify-event'
@@ -34,12 +35,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ skipped: true, reason: 'evento deshabilitado' })
   }
 
-  // Fecha de mañana en Argentina (calendar date, no operativa)
-  const ahoraAR = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' }))
-  const mañanaAR = new Date(ahoraAR)
-  mañanaAR.setDate(mañanaAR.getDate() + 1)
-  const mañanaStr = mañanaAR.toLocaleDateString('en-CA') // 'YYYY-MM-DD'
-  const diaNombre = mañanaAR.toLocaleDateString('es-AR', { weekday: 'long', timeZone: 'America/Argentina/Buenos_Aires' })
+  // Fecha de mañana en Argentina (calendar date, no operativa). Se parte del
+  // mediodía AR de hoy y se suma un día, sin depender del huso del servidor.
+  const hoyAR = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
+  const mañanaAR = new Date(new Date(`${hoyAR}T12:00:00-03:00`).getTime() + 86_400_000)
+  const mañanaStr = mañanaAR.toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' }) // 'YYYY-MM-DD'
+  const diaNombre = mañanaAR.toLocaleDateString('es-AR', { weekday: 'long', timeZone: 'America/Argentina/Tucuman' })
 
   // Turnos de mañana
   const { data: turnos, error } = await admin
@@ -79,7 +80,8 @@ export async function GET(request: NextRequest) {
   // Avisar solo una vez por turno
   const reservar = async (shiftId: string): Promise<boolean> => {
     const clave = `turno_manana:${shiftId}`
-    const { data } = await admin
+    // avisos_enviados no está en los tipos generados
+    const { data } = await (admin as unknown as SupabaseClient)
       .from('avisos_enviados')
       .upsert({ clave }, { onConflict: 'clave', ignoreDuplicates: true })
       .select('clave')
@@ -106,7 +108,8 @@ export async function GET(request: NextRequest) {
       url: '/mi-turno',
     }).catch(() => null)
 
-    if (result === null || result === false) {
+    // undefined = no tiene suscripción push (o falta VAPID); null = falló el envío
+    if (result == null) {
       sinPush.push(p.first_name ?? t.user_id)
     } else {
       enviados++

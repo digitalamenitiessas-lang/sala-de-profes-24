@@ -35,11 +35,13 @@ type CruceRow = {
   diferencia_gr: number | null
 }
 
-// Fecha y turno actuales en hora argentina (TM hasta las 16, TT después)
+// Día operativo y turno en hora argentina, con el mismo criterio que
+// /api/tolva/cruce y fechaOperativa (jornada.ts): el día corta a las 06:00,
+// TM de 06 a 16 y TT el resto (lo de 00-06 es el TT del día anterior).
 function nowInArgentina() {
-  const dateStr = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
-  return { dateStr, shift: (hour < 16 ? 'TM' : 'TT') as 'TM' | 'TT' }
+  const dateStr = new Date(Date.now() - 9 * 3_600_000).toISOString().slice(0, 10) // UTC-3 y corte 06:00
+  const hour = Number(new Date().toLocaleString('en-GB', { timeZone: 'America/Argentina/Tucuman', hour: '2-digit', hour12: false })) % 24
+  return { dateStr, shift: (hour >= 6 && hour < 16 ? 'TM' : 'TT') as 'TM' | 'TT' }
 }
 
 const consumption = (l: Pick<TolvaLog, 'start_gr' | 'added_gr' | 'end_gr'>) =>

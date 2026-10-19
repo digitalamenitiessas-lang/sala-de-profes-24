@@ -21,7 +21,10 @@ export function useDatosGasto(supplierId: string | null | undefined) {
   const [comprobante, setComprobante] = useState<ComprobanteTipo>('sin_comprobante')
   const [numero, setNumero] = useState('')
   // Número de la última carga de HOY de este proveedor (misma factura)
-  const [numeroAnterior, setNumeroAnterior] = useState<string | null>(null)
+  // Número de la última factura de hoy, con el proveedor al que pertenece: si
+  // se cambia de proveedor no queda el de otro mientras llega la respuesta.
+  const [anterior, setAnterior] = useState<{ supplierId: string | null; numero: string } | null>(null)
+  const numeroAnterior = anterior && anterior.supplierId === (supplierId ?? null) ? anterior.numero : null
   const [iva, setIva] = useState('')
   const [iibb, setIibb] = useState('')
 
@@ -36,7 +39,10 @@ export function useDatosGasto(supplierId: string | null | undefined) {
         // Lo último que se usó con este proveedor
         if (d.ultima?.categoriaId) setCategoriaId(d.ultima.categoriaId)
         if (COMPROBANTES.some((c) => c.key === d.ultima?.comprobante)) setComprobante(d.ultima.comprobante)
-        if (typeof d.ultima?.numero === 'string' && d.ultima.numero) { setNumero(d.ultima.numero); setNumeroAnterior(d.ultima.numero) }
+        // El número NO se precarga: con el mismo número la compra se suma al
+        // gasto anterior en Fudo, y eso tiene que decidirlo una persona (botón
+        // "Usar ese número" abajo del campo).
+        setAnterior(typeof d.ultima?.numero === 'string' && d.ultima.numero ? { supplierId: supplierId ?? null, numero: d.ultima.numero } : null)
       })
       .catch(() => { if (alive) setErrorFudo('No se pudieron traer las categorías') })
       .finally(() => { if (alive) setCargando(false) })
@@ -116,6 +122,16 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
       {comprobante !== 'sin_comprobante' && (
         <div className="space-y-1">
           <input value={numero} onChange={(e) => setNumero(e.target.value)} maxLength={45} placeholder="Número (ej: 0001-00012345)" className={inputCls} />
+          {/* Sumarse al gasto anterior en Fudo solo con un toque explícito */}
+          {numeroAnterior && numero.trim() !== numeroAnterior && (
+            <button
+              type="button"
+              onClick={() => setNumero(numeroAnterior)}
+              className="block text-left text-[10.5px] font-semibold text-[#4a90d9] underline decoration-dotted underline-offset-2"
+            >
+              ¿Es la misma factura que la carga anterior (N° {numeroAnterior})? Usar ese número
+            </button>
+          )}
           <p className="text-[10.5px] text-[#a39e97]">
             {numeroAnterior && numero.trim() === numeroAnterior
               ? 'Es el mismo número que la carga anterior de hoy: se suma a ese gasto en Fudo. Si es otra factura, cambialo.'

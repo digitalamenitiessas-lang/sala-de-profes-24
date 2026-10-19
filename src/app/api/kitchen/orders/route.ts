@@ -627,7 +627,7 @@ async function gastoFudoParaRecibo(
   const { createFudoExpenseForReceipt, sumarAGastoFudo } = await import('@/lib/fudo/expenses')
   const numero = p.gasto?.numero?.trim()
   if (numero && p.supplierId) {
-    const desde = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+    const desde = new Date(Date.now() - 7 * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (admin.from('stock_receipts') as any)
       .select('fudo_expense_id, payment_method')

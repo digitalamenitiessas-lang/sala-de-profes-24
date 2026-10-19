@@ -211,7 +211,7 @@ con el mismo esquema que Casa Fe, Citify y Malala. La base sigue en Supabase.
 | Variables | `/etc/salaprofes24/app.env` (640 root:salaprofes24). **No** tiene `LVE_DB_URL` ni `SUPABASE_DB_URL` (la app no las usa) |
 | Servicio | `salaprofes24.service` → `next start -H 127.0.0.1 -p 3070` · Nice=10 · MemoryMax=1G · Restart=always |
 | Caddy | `/etc/caddy/salaprofes24.caddy` (import al final del Caddyfile) |
-| Crons | `/etc/cron.d/salaprofes24` (los 12 de vercel.json, a 127.0.0.1:3070) · secreto en `/etc/salaprofes24/cron.curlrc` (600) · log `/var/log/salaprofes24-cron.log` |
+| Crons | `/etc/cron.d/salaprofes24` (13: los de vercel.json salvo el festejo del 19/10, a 127.0.0.1:3070) · secreto en `/etc/salaprofes24/cron.curlrc` (600) · log `/var/log/salaprofes24-cron.log` |
 | Relojes de Supabase | Los 7 de pg_cron apuntan a la dirección provisoria |
 
 **Deploy (reemplaza a Vercel):** con `main` pusheado, `bash scripts/deploy-vps.sh`. La VPS no tiene
@@ -228,3 +228,28 @@ de solo lectura (no usar la de `sala-de-profes-LVE` que está en `/root/.ssh`).
   `NEXT_PUBLIC_APP_URL` en `app.env` (y se recompila: es `NEXT_PUBLIC_*`), los relojes de pg_cron y la
   Site URL de Supabase.
 - La VPS está en EE. UU. y la base en San Pablo: cada consulta tarda un poco más que en Vercel.
+
+## 11. Segunda sincronización con LVE (19/10)
+
+Traídos los cambios de LVE `2cb4da4..be59676` (runner cuenta stock, compras directas de Fudo al
+historial, recordatorio de turno 18 h, aviso a socios por fichajes, cruce tolva vs ventas, misma factura
+= un gasto, festejo del 19/10). Sin cambios de base. Último commit de LVE sincronizado: **`be59676`**.
+Cron nuevo en la VPS: `recordatorio-turno` (21:00 UTC). El del festejo no se agregó (era solo el 19/10).
+
+**Arreglado en la 24 sobre lo que trajo LVE (avisarle a tu compañero, LVE tiene los mismos bugs):**
+- Aviso de llegada tarde: nunca saltaba (`start_time` viene como HH:MM:SS → NaN) y el push abría
+  `/fichajes`, que no existe. También corre aunque Fudo esté caído.
+- Compras cargadas directo en Fudo: se sumaban **dos veces** al stock de la app (el espejo de Fudo ya
+  las trae) y tomaban la fecha en UTC. Ahora se guarda solo el historial y se relee el stock de Fudo.
+- Cruce tolva/ventas: cortaba en 1000 filas (diferencia inflada), la API dejaba verlo a cualquiera
+  (ahora solo socios), no encontraba "Cafe" sin tilde y partía mal el turno después de medianoche.
+- Recordatorio de turno: contaba como "enviado" a quien no tiene avisos activos.
+- Compras: el número de factura anterior se **precargaba** y la compra se sumaba sola al gasto anterior
+  en Fudo. Ahora hay que elegirlo a propósito ("¿Es la misma factura…? Usar ese número").
+
+**Queda como en LVE (decidir más adelante):**
+- El servidor igual suma a un gasto de Fudo si alguien escribe a mano un número de factura que coincide
+  con una carga de los últimos 7 días del mismo proveedor y medio de pago.
+- Con dos turnos el mismo día, el aviso de tardanza del segundo turno compara contra el fichaje de la
+  mañana.
+- El runner ahora puede contar stock: mientras no se haga la Puesta a cero, sus conteos escriben en Fudo.

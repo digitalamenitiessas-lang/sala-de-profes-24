@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fechaOperativa } from '@/lib/attendance/jornada'
+import { fechaOperativa, instanteDe } from '@/lib/attendance/jornada'
+import { mustClockIn } from '@/lib/roles'
+import { actualizarSalud } from '@/lib/fudo/salud'
 import { sendPushToUser } from '@/lib/push/send'
 import { idsConRolEnTurno, ROLES_ENCARGADO_TURNO } from '@/lib/turnos/rol-del-turno'
 import type { FudoExpense } from '@/lib/fudo/expenses'
@@ -120,9 +122,9 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
     out.sinPrecio = nSinPrecio
   }
 
-  // ---- Gastos con insumos cargados directo en Fudo → importar al stock ----
+  // ---- Gastos con insumos cargados directo en Fudo → importar como compras ----
   out.gastosFudo = await gastosManualesEnFudo(admin, ahora)
-  await importarGastosManuales(admin, ahora) // actualiza stock sin esperar al sync de las 3am
+  await importarGastosManuales(admin, ahora) // registra la compra y hace releer el stock de Fudo en este pulso
   return out
 }
 
@@ -153,7 +155,9 @@ export async function verificarMarcadosAtiempo(admin: SupabaseClient, ahora = ne
     return `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`
   }
 
-  const hoyStr = ahoraAR.toLocaleDateString('en-CA') // 'YYYY-MM-DD'
+  // El día operativo (lo que guarda attendance_logs.operative_date); de 7 a 23 h
+  // coincide con la fecha de calendario de Argentina
+  const hoyStr = fechaOperativa(ahora)
 
   type ShiftRow = { id: string; user_id: string; start_time: string }
   const { data: turnos } = await admin
@@ -199,18 +203,19 @@ export async function verificarMarcadosAtiempo(admin: SupabaseClient, ahora = ne
   for (const t of aTratar) {
     if (tieneAusencia.has(t.user_id)) continue
     const p = perfil.get(t.user_id)
-    if (!p || p.role === 'socio') continue
+    if (!p || !mustClockIn(p)) continue // los socios no fichan (salvo los de SOCIOS_QUE_FICHAN)
 
     const nombre = p.first_name ?? 'Empleado'
     const fichaje = primerFichaje.get(t.user_id)
 
     if (!fichaje) {
-      alertas.push(`${nombre}: no marcó (${t.start_time})`)
+      alertas.push(`${nombre}: no marcó (${t.start_time.slice(0, 5)})`)
       continue
     }
 
+    // start_time viene 'HH:MM:SS': armar el instante a mano daba NaN y nunca había tardanza
     const tardanzaMin = Math.round(
-      (Date.parse(fichaje) - Date.parse(`${hoyStr}T${t.start_time}:00-03:00`)) / 60_000,
+      (Date.parse(fichaje) - instanteDe(hoyStr, t.start_time).getTime()) / 60_000,
     )
     if (tardanzaMin > GRACIA_MARCADO_MIN) {
       alertas.push(`${nombre}: ${tardanzaMin} min tarde`)
@@ -226,7 +231,7 @@ export async function verificarMarcadosAtiempo(admin: SupabaseClient, ahora = ne
       sendPushToUser(s.id, {
         title: n === 1 ? `⏰ ${alertas[0]}` : `⏰ ${n} empleados: sin marcar o tarde`,
         body: n > 1 ? alertas.join(' · ') : '',
-        url: '/fichajes',
+        url: '/equipo/asistencia',
       }),
     ),
   )
@@ -278,15 +283,20 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 }
 
 // ---------------------------------------------------------------------------
-// Importación automática de gastos manuales de Fudo al stock de la app
+// Importación automática de gastos manuales de Fudo como compras de la app
 // ---------------------------------------------------------------------------
 // Cuando alguien carga una compra directo en Fudo (con ingredientes), Fudo
-// actualiza su propio stock. La app no se entera hasta el sync de las 3am.
-// Esta función detecta esos gastos y crea los stock_receipts en la app YA,
-// sin esperar al cron nocturno. Corre cada 10 minutos via fudo-pulso.
+// actualiza su propio stock. Esta función detecta esos gastos y crea los
+// stock_receipts en la app (historial de compras y precios). Corre cada 10
+// minutos via fudo-pulso.
+//
+// En la 24 el stock de la app es espejo del de Fudo (el pulso lo copia con
+// syncFromFudo): la compra ya está sumada en Fudo, así que NO se suma a
+// current_qty (se contaba dos veces). En su lugar se borra
+// fudo_salud.ultima_lectura_stock_at y el mismo pulso vuelve a leer el stock.
 //
 // Dedup: usa fudo_expense_id en stock_receipts. Si ya existe un receipt con ese
-// fudo_expense_id para ese stock_item, se saltea (no hay doble conteo).
+// fudo_expense_id para ese stock_item, se saltea.
 // ---------------------------------------------------------------------------
 
 async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<void> {
@@ -317,7 +327,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
   // Cargar mapeos en bloque (evita N queries individuales)
   const [{ data: stockItems }, { data: suppliers }] = await Promise.all([
     admin.from('stock_items')
-      .select('id, name, unit, current_qty, fudo_ingredient_id')
+      .select('id, name, unit, fudo_ingredient_id')
       .eq('is_active', true)
       .not('fudo_ingredient_id', 'is', null),
     admin.from('suppliers')
@@ -325,17 +335,19 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
       .not('fudo_provider_id', 'is', null),
   ])
 
-  type StockRow = { id: string; name: string; unit: string; current_qty: number; fudo_ingredient_id: string }
+  type StockRow = { id: string; name: string; unit: string; fudo_ingredient_id: string }
   const itemByIngId = new Map(
-    ((stockItems ?? []) as StockRow[]).map((si) => [si.fudo_ingredient_id, { ...si }]),
+    ((stockItems ?? []) as StockRow[]).map((si) => [si.fudo_ingredient_id, si]),
   )
   const supplierByProvId = new Map(
     ((suppliers ?? []) as { id: string; fudo_provider_id: string }[]).map((s) => [s.fudo_provider_id, s.id]),
   )
 
+  let importados = 0
   for (const gasto of pendientes) {
     const supplierId = gasto.providerId ? (supplierByProvId.get(gasto.providerId) ?? null) : null
-    const fechaAR = gasto.date.slice(0, 10) // 'YYYY-MM-DD'
+    // gasto.date es ISO en UTC: la fecha de la compra es la de Argentina
+    const fechaAR = new Date(gasto.date).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' }) // 'YYYY-MM-DD'
 
     for (const item of gasto.items) {
       if (item.qty <= 0) continue
@@ -369,23 +381,12 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
         console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: item.ingredientId })
         continue
       }
-
-      // Sumar al stock actual y registrar en stock_logs
-      const oldQty = Number(si.current_qty)
-      const newQty = Math.round((oldQty + item.qty) * 1000) / 1000
-      await Promise.allSettled([
-        admin.from('stock_items').update({ current_qty: newQty, updated_at: ahora.toISOString() }).eq('id', si.id),
-        admin.from('stock_logs').insert({
-          stock_item_id: si.id,
-          action: 'receipt',
-          old_qty: oldQty,
-          new_qty: newQty,
-          note: `Compra en Fudo: ${gasto.provider ?? 'proveedor'} — importado automáticamente`,
-        }),
-      ])
-
-      // Mantener el mapa actualizado para el próximo ítem del mismo insumo
-      si.current_qty = newQty
+      // No se suma a current_qty: la compra ya está en el stock de Fudo
+      importados++
     }
   }
+
+  // Hubo compras nuevas: que el paso 'stock' de este mismo pulso (corre después
+  // de los avisos) vuelva a leer el stock de Fudo en vez de esperar la hora
+  if (importados > 0) await actualizarSalud(admin, { ultima_lectura_stock_at: null })
 }

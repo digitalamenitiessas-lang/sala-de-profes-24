@@ -15,6 +15,7 @@
 
 import { SupabaseClient } from '@supabase/supabase-js'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
+import { COUNT_STOCK_ROLES } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // Fecha de hoy en Argentina
@@ -801,7 +802,7 @@ export async function checkDuplicates(
 
 const ACTION_PERMISSIONS: Record<ActionIntent, string[]> = {
   PEDIDO_MERCADERIA: ['socio', 'encargado', 'chef', 'cocina', 'barista'], // All operational roles
-  ACTUALIZAR_STOCK: ['socio', 'encargado', 'chef', 'cocina', 'barista'], // Who can count/update stock
+  ACTUALIZAR_STOCK: [...COUNT_STOCK_ROLES], // Los mismos que pueden contar stock (src/lib/roles.ts)
   REPORTE_PROBLEMA: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can report
   AVISO_ENCARGADO: ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner', 'bacha'], // Everyone can notify
   PRODUCCION_COMPLETA: ['socio', 'encargado', 'chef', 'cocina'], // Only kitchen roles can register production

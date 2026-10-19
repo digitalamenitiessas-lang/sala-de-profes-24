@@ -53,6 +53,10 @@ export async function GET(request: NextRequest) {
     return data?.length ?? 0
   })
 
+  // 3d. Alerta a socios si alguien no marcó o llegó tarde (30 min post inicio).
+  // No depende de Fudo: va antes de cortar cuando Fudo no responde.
+  await paso('marcados_atiempo', () => verificarMarcadosAtiempo(admin))
+
   if (error) return NextResponse.json({ ok: false, fudo: error, ...out })
 
   // Fudo responde: los errores que eran solo de conexión (no de datos) se
@@ -78,9 +82,6 @@ export async function GET(request: NextRequest) {
 
   // 3c. Avisos al encargado: pedidos que siguen en camino, producciones sin validar
   await paso('avisos_operativos', () => avisosOperativos(admin))
-
-  // 3d. Alerta a socios si alguien no marcó o llegó tarde (30 min post inicio)
-  await paso('marcados_atiempo', () => verificarMarcadosAtiempo(admin))
 
   const salud = await leerSalud(admin)
 
