@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { formatDistanceToNowStrict } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { toast } from 'sonner'
-import { AlertTriangle, ArrowLeft, Check, ChefHat, ClipboardList, Clock, Loader2, Minus, Plus, Scale } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Check, ChefHat, ClipboardList, Clock, Loader2, Minus, Plus, Scale, Search, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { isKitchenRole } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
@@ -55,6 +55,8 @@ function Elaborados() {
   const params = useSearchParams()
   const [modo, setModo] = useState<'lista' | 'contar'>(params.get('tab') === 'contar' ? 'contar' : 'lista')
   const [filtro, setFiltro] = useState<Filtro>('todos')
+  // Lupa: escribir una palabra y ir directo al elaborado (en las dos pestañas)
+  const [busqueda, setBusqueda] = useState('')
   const [loHice, setLoHice] = useState<Elaborado | null>(null)
   const [receta, setReceta] = useState<Elaborado | null>(null)
   const [faltante, setFaltante] = useState(false)
@@ -74,11 +76,12 @@ function Elaborados() {
   useEffect(() => { if (puedeVer) void load() }, [puedeVer, load])
 
   const lista = useMemo(() => {
-    const e = data?.elaborados ?? []
+    const q = normalizar(busqueda.trim())
+    const e = (data?.elaborados ?? []).filter((x) => !q || normalizar(x.name).includes(q))
     if (filtro === 'sin_receta') return e.filter((x) => !x.receta)
     if (filtro === 'sin_vida') return e.filter((x) => !x.shelf_life_days)
     return e
-  }, [data, filtro])
+  }, [data, filtro, busqueda])
 
   if (profileLoading) return <Centro><Loader2 className="size-6 animate-spin text-[#006d5a]" /></Centro>
   if (!puedeVer) return <Centro><p className="text-sm text-[#3d2c24]">Solo para cocina, encargados y socios</p></Centro>
@@ -119,6 +122,8 @@ function Elaborados() {
             ))}
           </div>
 
+          <Buscador valor={busqueda} onChange={setBusqueda} />
+
           {modo === 'lista' ? (
             <>
               <div className="flex gap-1.5">
@@ -140,13 +145,13 @@ function Elaborados() {
                     onVidaGuardada={() => void load(true)}
                   />
                 ))}
-                {lista.length === 0 && <p className="py-8 text-center text-[13px] text-[#a39e97]">Nada con ese filtro</p>}
+                {lista.length === 0 && <p className="py-8 text-center text-[13px] text-[#a39e97]">{busqueda.trim() ? `Ningún elaborado con “${busqueda.trim()}”` : 'Nada con ese filtro'}</p>}
               </div>
             </>
           ) : (
             <div className="space-y-4">
               <ConteoDeHoy clave={data.elaborados.filter((e) => e.last_counted_at).length} />
-              <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} onListo={() => void load(true)} />
+              <Conteo elaborados={usados.length > 0 ? usados : data.elaborados} busqueda={busqueda} onListo={() => void load(true)} />
             </div>
           )}
         </>
@@ -274,14 +279,17 @@ function TarjetaElaborado({ e, puedeVida, puedeReceta, onLoHice, onReceta, onVid
 }
 
 // Conteo rápido: se escribe lo que hay y se guarda todo junto
-function Conteo({ elaborados, onListo }: { elaborados: Elaborado[]; onListo: () => void }) {
+function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; busqueda: string; onListo: () => void }) {
   const [valores, setValores] = useState<Record<string, string>>({})
   const [notas, setNotas] = useState<Record<string, string>>({})
   const [errores, setErrores] = useState<Record<string, string>>({})
   const [guardando, setGuardando] = useState(false)
   const [comentario, setComentario] = useState('')
 
+  // Se guarda TODO lo cargado; la búsqueda solo achica lo que se ve
   const cargados = elaborados.filter((e) => (valores[e.id] ?? '').trim() !== '')
+  const q = normalizar(busqueda.trim())
+  const visibles = q ? elaborados.filter((e) => normalizar(e.name).includes(q)) : elaborados
   const falta = cargados.filter((e) => {
     const n = parseFloat((valores[e.id] ?? '').replace(',', '.'))
     return !Number.isFinite(n) || n < 0 || (necesitaNota(e.current_qty, n, e.unit) && !(notas[e.id] ?? '').trim())
@@ -329,8 +337,14 @@ function Conteo({ elaborados, onListo }: { elaborados: Elaborado[]; onListo: () 
         Escribí cuánto hay de cada uno (en su unidad) y guardá todo junto. Lo que no contás, dejalo vacío.
         Al guardar, a socios y encargados les llega el resumen por notificación.
       </p>
+      {q && (
+        <p className="px-1 text-[11px] text-[#a39e97]">
+          {visibles.length === 0 ? `Ningún elaborado con “${busqueda.trim()}”.` : `Mostrando ${visibles.length} de ${elaborados.length}.`}
+          {cargados.length > 0 && ` Lo que ya cargaste (${cargados.length}) se guarda igual.`}
+        </p>
+      )}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-[#ebe6df]">
-        {elaborados.map((e) => {
+        {visibles.map((e) => {
           const v = valores[e.id] ?? ''
           const n = parseFloat(v.replace(',', '.'))
           const pideNota = v.trim() !== '' && Number.isFinite(n) && necesitaNota(e.current_qty, n, e.unit)
@@ -438,6 +452,30 @@ function ConteoDeHoy({ clave }: { clave: number }) {
             ))}
           </ul>
         </div>
+      )}
+    </div>
+  )
+}
+
+/** Para buscar sin importar mayúsculas ni tildes */
+function normalizar(s: string) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
+function Buscador({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  return (
+    <div className="relative">
+      <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+      <input
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Buscar elaborado…"
+        className="w-full rounded-2xl border border-[#ebe6df] bg-white py-2.5 pl-10 pr-9 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
+      />
+      {valor && (
+        <button onClick={() => onChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]" aria-label="Borrar búsqueda">
+          <X className="size-3.5" />
+        </button>
       )}
     </div>
   )

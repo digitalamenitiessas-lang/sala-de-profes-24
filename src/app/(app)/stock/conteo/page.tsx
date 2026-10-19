@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowLeft, Check, Loader2, AlertTriangle, ClipboardList, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Check, Loader2, AlertTriangle, ClipboardList, RotateCcw, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
 import { LoadingState } from '@/components/ui/LoadingState'
@@ -63,6 +63,11 @@ function needsNote(current: number, next: number, unit: string) {
   return abs >= threshold || pct >= 0.25
 }
 
+/** Para buscar sin importar mayúsculas ni tildes */
+function normalizar(s: string) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+
 export default function ConteoPage() {
   return (
     <Suspense fallback={<LoadingState message="Preparando el conteo..." />}>
@@ -80,6 +85,9 @@ function ConteoContent() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [showAll, setShowAll] = useState(false)
+  // Lupa: con algo escrito busca en TODO lo del área (le toque hoy o no)
+  const [busqueda, setBusqueda] = useState('')
+  const q = normalizar(busqueda.trim())
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -143,6 +151,7 @@ function ConteoContent() {
       // Lo ya contado en esta pasada se queda a la vista: al guardarlo cambia
       // de bucket (queda "al día") y si no, desaparecía de la lista y la barra
       // de progreso retrocedía.
+      if (q) return normalizar(i.name).includes(q)
       if (done[i.id] !== undefined) return true
       if (showAll) return true
       const b = bucketOf(i)
@@ -156,7 +165,7 @@ function ConteoContent() {
       const da = daysSince(a.last_counted_at) ?? 9999, db = daysSince(b.last_counted_at) ?? 9999
       return db - da || a.name.localeCompare(b.name)
     })
-  }, [countable, showAll, modo, done])
+  }, [countable, showAll, modo, done, q])
 
   const grouped = useMemo(() => {
     const g: Record<Bucket, Item[]> = { negativo: [], intermedio: [], critico: [], vencido: [], otro: [] }
@@ -238,7 +247,23 @@ function ConteoContent() {
         ))}
       </div>
 
-      {!loading && total > 0 && (
+      {/* Lupa */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#a39e97]" />
+        <input
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          placeholder={area === 'all' ? 'Buscar producto…' : `Buscar en ${STOCK_AREAS.find((a) => a.value === area)?.label.toLowerCase() ?? 'esta área'}…`}
+          className="w-full rounded-2xl border border-[#ebe6df] bg-white py-2.5 pl-10 pr-9 text-sm text-[#3d2c24] placeholder:text-[#a39e97] focus:border-[#006d5a] focus:outline-none"
+        />
+        {busqueda && (
+          <button onClick={() => setBusqueda('')} className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[#a39e97] hover:bg-[#f3efe9]" aria-label="Borrar búsqueda">
+            <X className="size-3.5" />
+          </button>
+        )}
+      </div>
+
+      {!loading && total > 0 && !q && (
         <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-[#ebe6df]">
           <div className="mb-2 flex items-center justify-between text-[13px]">
             <span className="font-semibold text-[#3d2c24]">{counted} de {total} contados</span>
@@ -252,6 +277,11 @@ function ConteoContent() {
 
       {loading ? (
         <LoadingState message="Preparando el recorrido..." />
+      ) : total === 0 && q ? (
+        <div className="rounded-2xl bg-white p-6 text-center text-[14px] text-[#7d6c64] shadow-sm ring-1 ring-[#ebe6df]">
+          No hay ningún producto con “{busqueda.trim()}”{area !== 'all' ? ' en esta área' : ''}.
+          {area !== 'all' && <button onClick={() => selectArea('all')} className="mt-2 block w-full text-[12px] font-semibold text-[#006d5a]">Buscar en todas las áreas</button>}
+        </div>
       ) : total === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-center shadow-sm ring-1 ring-[#ebe6df]">
           <Check className="mx-auto mb-2 size-8 text-[#006d5a]" />
