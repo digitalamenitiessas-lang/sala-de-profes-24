@@ -23,7 +23,7 @@ const MANAGER_ROUTES = [
 const MANAGER_ROLES = new Set(['socio', 'encargado'])
 
 export async function middleware(request: NextRequest) {
-  const { supabaseResponse, user, role, isActive } = await updateSession(request)
+  const { supabaseResponse, user, role, isActive, authUnavailable } = await updateSession(request)
   const { pathname } = request.nextUrl
 
   // API routes handle their own auth — skip middleware redirect
@@ -36,7 +36,8 @@ export async function middleware(request: NextRequest) {
   )
 
   // Unauthenticated user trying to access a protected route → redirect to login
-  if (!user && !isPublicRoute) {
+  // (si la sesión no se pudo verificar por un corte de red, no se lo echa)
+  if (!user && !isPublicRoute && !authUnavailable) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
     return NextResponse.redirect(url)
