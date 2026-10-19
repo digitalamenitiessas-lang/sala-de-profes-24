@@ -141,6 +141,9 @@ export function suggestedCountEveryDays(item: {
   category?: string | null
 }): number {
   if (item.is_produced) return 1
+  // El pan se compra y se gasta todos los días: a diario esté en el área que
+  // esté (los panes se cuentan en Cocina, no en Pastelería).
+  if (item.category === 'panaderia') return 1
   const area = isStockArea(item.area) ? item.area : areaFromLveCategory(item.category)
   if (area === 'pasteleria') return 1
   if (item.category === 'carnes' || item.category === 'verduras' || item.category === 'frutas' || item.category === 'lacteos') return 3
