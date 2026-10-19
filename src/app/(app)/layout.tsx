@@ -13,6 +13,7 @@ import { ProtocoloAlarma } from '@/components/protocolos/ProtocoloAlarma'
 import { InstallPrompt } from '@/components/pwa/InstallPrompt'
 import { PushSubscriber } from '@/components/pwa/PushSubscriber'
 import { PushPrompt } from '@/components/push/PushPrompt'
+import { DiaDeLaMadre2026 } from '@/components/festejo/DiaDeLaMadre2026'
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 export default async function AppLayout({
@@ -48,6 +49,7 @@ export default async function AppLayout({
           <InstallPrompt />
           <PushSubscriber />
           <PushPrompt />
+          <DiaDeLaMadre2026 />
         </div>
       </ProfileProvider>
     </SWRProvider>

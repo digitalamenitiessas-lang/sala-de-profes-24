@@ -616,6 +616,40 @@ export async function POST(request: NextRequest) {
 type Resultado = { status: number; json: Record<string, unknown> }
 
 /**
+ * Gasto de Fudo para un recibo de "Llegó". Si ya hay otro recibo del mismo
+ * proveedor con el MISMO número de comprobante (la factura se cargó producto
+ * por producto), se suma a ese gasto en vez de crear uno por producto.
+ */
+async function gastoFudoParaRecibo(
+  admin: ReturnType<typeof createAdminClient>,
+  p: Parameters<typeof import('@/lib/fudo/expenses').createFudoExpenseForReceipt>[0] & { supplierId: string | null; receiptId: number | null },
+) {
+  const { createFudoExpenseForReceipt, sumarAGastoFudo } = await import('@/lib/fudo/expenses')
+  const numero = p.gasto?.numero?.trim()
+  if (numero && p.supplierId) {
+    const desde = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data } = await (admin.from('stock_receipts') as any)
+      .select('fudo_expense_id, payment_method')
+      .eq('supplier_id', p.supplierId)
+      .eq('comprobante_numero', numero)
+      .not('fudo_expense_id', 'is', null)
+      .neq('id', p.receiptId ?? -1)
+      .gte('received_date', desde)
+      .order('id', { ascending: false })
+      .limit(1)
+    const previo = (data ?? [])[0] as { fudo_expense_id: string; payment_method: string | null } | undefined
+    if (previo && previo.payment_method === (p.medioPago ?? null)) {
+      const unido = await sumarAGastoFudo({ expenseId: String(previo.fudo_expense_id), delta: p.costTotal, medioPago: p.medioPago })
+      if (unido) return unido
+    }
+  }
+  const { supplierId: _s, receiptId: _r, ...crear } = p
+  void _s; void _r
+  return createFudoExpenseForReceipt(crear)
+}
+
+/**
  * Guarda categoría y comprobante en los recibos. IVA e IIBB son de la factura
  * entera: van solo en el primero (si no, al sumar recibos se multiplicarían).
  * Las columnas las agrega supabase/migrations/20261005_stock_receipts_gasto_columns.sql:
@@ -802,8 +836,9 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
           .single()
         if (suppRow?.fudo_provider_id) {
           lveExpenseFudoProviderId = suppRow.fudo_provider_id
-          const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
-          lveExpense = await createFudoExpenseForReceipt({
+          lveExpense = await gastoFudoParaRecibo(admin, {
+            supplierId: effectiveSupplierId,
+            receiptId: lveReceiptId,
             fudoProviderId: suppRow.fudo_provider_id,
             fudoIngredientId: si.fudo_ingredient_id ?? null,
             qty,
@@ -975,8 +1010,9 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
       if (ssReceiptId && sinStockSupplierId && sinStockAmount > 0) {
         const { data: sinStockSupp } = await admin.from('suppliers').select('fudo_provider_id').eq('id', sinStockSupplierId).single()
         if (sinStockSupp?.fudo_provider_id) {
-          const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
-          const sinStockFudoExpense = await createFudoExpenseForReceipt({
+          const sinStockFudoExpense = await gastoFudoParaRecibo(admin, {
+            supplierId: sinStockSupplierId,
+            receiptId: ssReceiptId,
             fudoProviderId: sinStockSupp.fudo_provider_id,
             qty: 1,
             costTotal: sinStockAmount,

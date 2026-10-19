@@ -111,6 +111,13 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
     target_roles: ['socio', 'encargado', 'chef', 'barista', 'runner', 'cocina', 'bacha'],
     target_user_ids: [],
   },
+  turno_manana: {
+    label: 'Recordatorio de turno del día siguiente',
+    description: 'A las 18hs avisa a cada empleado que tiene turno mañana, con el horario, para que confirme con el encargado si no puede ir.',
+    enabled: true,
+    target_roles: [],
+    target_user_ids: [],
+  },
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS

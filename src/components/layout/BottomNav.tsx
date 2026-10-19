@@ -502,9 +502,12 @@ export function BottomNav() {
       </AnimatePresence>
 
       {/* Navigation bar */}
+      {/* Capa propia (transform-gpu): en páginas largas y con muchas animaciones
+          (Compras) el celular redibujaba la barra con atraso al scrollear y
+          parecía que "se levantaba" en medio del scroll. */}
       <nav
         aria-label="Navegacion principal"
-        className="fixed bottom-0 left-0 right-0 z-50 border-t border-border/60 bg-[#fefcf9] pb-[env(safe-area-inset-bottom)]"
+        className="fixed bottom-0 left-0 right-0 z-50 transform-gpu border-t border-border/60 bg-[#fefcf9] pb-[env(safe-area-inset-bottom)] [backface-visibility:hidden]"
       >
         <div className="flex h-[4.25rem] items-center justify-around px-1">
           {items.map((item) => {

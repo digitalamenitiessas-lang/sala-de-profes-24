@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getStockItems } from '@/lib/queries/stock'
+import { canCountStock } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // GET /api/stock/items
@@ -28,7 +29,8 @@ export async function GET(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    if (!profile || !['socio', 'encargado', 'chef', 'cocina', 'barista'].includes(profile.role)) {
+    // Mismos roles que cuentan stock: la lista aparte dejaba al runner sin poder cargar el conteo
+    if (!profile || !canCountStock(profile.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 

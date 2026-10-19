@@ -57,8 +57,9 @@ export function isKitchenRole(role: string | AppRole | null | undefined): boolea
  * ¿Puede contar stock y registrar movimientos? Cocina cuenta su área y barra
  * cuenta la suya: si el barista no entra, el área "barra" no la cuenta nadie.
  */
+export const COUNT_STOCK_ROLES: readonly AppRole[] = ['socio', 'encargado', 'chef', 'cocina', 'barista', 'runner']
 export function canCountStock(role: string | AppRole | null | undefined): boolean {
-  return !!role && (MANAGER_ROLES.has(role) || role === 'chef' || role === 'cocina' || role === 'barista')
+  return !!role && (COUNT_STOCK_ROLES as readonly string[]).includes(role)
 }
 
 /** Can this role create kitchen orders? */

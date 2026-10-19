@@ -25,6 +25,13 @@ import { descripcionGasto, type CategoriaGasto, type ComprobanteTipo, type Datos
 //   - Descartar gastos sin ningún payment válido.
 // ---------------------------------------------------------------------------
 
+export type FudoExpenseItem = {
+  ingredientId: string
+  name: string
+  qty: number   // de attributes.quantity en Fudo
+  price: number // de attributes.price en Fudo (precio unitario)
+}
+
 export type FudoExpense = {
   id: string
   provider: string | null
@@ -36,6 +43,8 @@ export type FudoExpense = {
   amount: number // Σ payments no cancelados
   ingredientNames: string[]
   itemCount: number // cantidad de expenseItems con ingredient
+  /** Items con cantidad y precio unitario (disponibles cuando Fudo los incluyó) */
+  items: FudoExpenseItem[]
 }
 
 type JsonApiRes = {
@@ -113,6 +122,7 @@ export async function fetchFudoExpensesConMeta(
   const payments = new Map<string, { amount: number; canceled: boolean; createdAt: string }>()
   const ingredientName = new Map<string, string>()
   const expenseItemIngredient = new Map<string, string | null>()
+  const expenseItemDetail = new Map<string, { qty: number; price: number }>()
 
   try {
     for (let page = 1; page <= 20; page++) {
@@ -140,6 +150,10 @@ export async function fetchFudoExpensesConMeta(
             break
           case 'ExpenseItem':
             expenseItemIngredient.set(inc.id, relOne(inc.relationships, 'ingredient')?.id ?? null)
+            expenseItemDetail.set(inc.id, {
+              qty: Number(attrs.quantity ?? 0) || 0,
+              price: Number(attrs.price ?? 0) || 0,
+            })
             break
         }
       }
@@ -168,16 +182,19 @@ export async function fetchFudoExpensesConMeta(
     const date = sortedByDate[0]?.createdAt || ''
     if (!date) continue
 
-    // Ingredientes: nombres de los ingredient no-null de sus expenseItems
+    // Ingredientes: nombres, ids y detalle (qty/price) de los expenseItems
     const itemRefs = relArray(exp.relationships, 'expenseItems')
     const names: string[] = []
     const ingredientIds: string[] = []
+    const items: FudoExpenseItem[] = []
     for (const it of itemRefs) {
       const ingId = expenseItemIngredient.get(it.id)
       if (!ingId) continue
       ingredientIds.push(ingId)
-      const name = ingredientName.get(ingId)
-      if (name) names.push(name)
+      const name = ingredientName.get(ingId) ?? ingId
+      const detail = expenseItemDetail.get(it.id) ?? { qty: 0, price: 0 }
+      if (name !== ingId) names.push(name)
+      items.push({ ingredientId: ingId, name, qty: detail.qty, price: detail.price })
     }
 
     const providerId = relOne(exp.relationships, 'provider')?.id
@@ -189,7 +206,8 @@ export async function fetchFudoExpensesConMeta(
       date,
       amount: Math.round(amount * 100) / 100,
       ingredientNames: names,
-      itemCount: names.length,
+      itemCount: items.length,
+      items,
     })
   }
 
@@ -402,6 +420,35 @@ export async function postFudoExpense(params: Parameters<typeof fudoExpenseBody>
     if (!params.gasto?.comprobante || params.gasto.comprobante === 'sin_comprobante') throw err
     console.warn('[postFudoExpense] reintento sin tipo de comprobante:', err instanceof Error ? err.message : err)
     return await enviar(false)
+  }
+}
+
+/**
+ * Suma un producto a un gasto de Fudo que ya existe (misma factura cargada
+ * producto por producto con "Llegó"). Solo si el gasto sigue en el mismo
+ * estado que la compra nueva: cuenta corriente → impago; pagado → pagado (el
+ * pago del monto agregado lo imputa quien llama). Si no, null: va aparte.
+ */
+export async function sumarAGastoFudo(params: { expenseId: string; delta: number; medioPago: string | null | undefined }): Promise<{ id: string; amount: number } | null> {
+  const { expenseId, delta, medioPago } = params
+  if (!(delta > 0)) return null
+  try {
+    const res = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=amount,status,canceled`)
+    const a = res?.data?.attributes
+    if (!a || a.canceled === true) return null
+    const ctaCte = medioPago === 'cuenta_corriente'
+    if (ctaCte ? a.status !== 'UNPAID' : a.status !== 'PAID') return null
+    const nuevo = Math.round((Number(a.amount ?? 0) + delta) * 100) / 100
+    await fudoFetch(`/expenses/${encodeURIComponent(expenseId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: expenseId, type: 'Expense', attributes: { amount: nuevo } } }),
+    })
+    cache = null
+    return { id: expenseId, amount: delta }
+  } catch (err) {
+    console.warn('[sumarAGastoFudo] va como gasto aparte:', err instanceof Error ? err.message : err)
+    return null
   }
 }
 

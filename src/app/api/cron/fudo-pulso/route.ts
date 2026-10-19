@@ -7,7 +7,7 @@ import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { sincronizarMenu } from '@/lib/fudo/menu-sync'
 import { sincronizarPagosDesdeFudo } from '@/lib/compras/pagos-fudo'
 import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
-import { avisosOperativos } from '@/lib/avisos/operativos'
+import { avisosOperativos, verificarMarcadosAtiempo } from '@/lib/avisos/operativos'
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/fudo-pulso — cada 10 minutos (pg_cron en Supabase)
@@ -78,6 +78,9 @@ export async function GET(request: NextRequest) {
 
   // 3c. Avisos al encargado: pedidos que siguen en camino, producciones sin validar
   await paso('avisos_operativos', () => avisosOperativos(admin))
+
+  // 3d. Alerta a socios si alguien no marcó o llegó tarde (30 min post inicio)
+  await paso('marcados_atiempo', () => verificarMarcadosAtiempo(admin))
 
   const salud = await leerSalud(admin)
 

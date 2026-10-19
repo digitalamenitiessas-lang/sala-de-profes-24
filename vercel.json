@@ -47,6 +47,14 @@
     {
       "path": "/api/cron/stock-preclose",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/recordatorio-turno",
+      "schedule": "0 21 * * *"
+    },
+    {
+      "path": "/api/cron/festejo-madre",
+      "schedule": "0 11 19 10 *"
     }
   ]
 }

@@ -26,6 +26,15 @@ type TolvaLog = {
   notes: string | null
 }
 
+type CruceRow = {
+  log_date: string
+  shift: 'TM' | 'TT'
+  consumo_real_gr: number | null
+  cafes_vendidos: number
+  consumo_esperado_gr: number
+  diferencia_gr: number | null
+}
+
 // Fecha y turno actuales en hora argentina (TM hasta las 16, TT después)
 function nowInArgentina() {
   const dateStr = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
@@ -42,6 +51,8 @@ export default function TolvaPage() {
 
   const [{ dateStr, shift }] = useState(nowInArgentina)
   const [logs, setLogs] = useState<TolvaLog[]>([])
+  const [cruce, setCruce] = useState<Map<string, CruceRow>>(new Map())
+  const [grPorCafe, setGrPorCafe] = useState(17)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -59,6 +70,19 @@ export default function TolvaPage() {
       .order('shift', { ascending: false })
     const rows = (data ?? []) as TolvaLog[]
     setLogs(rows)
+
+    // Cruce con ventas — solo socios (info de gestión, no del barista)
+    if (profile?.role === 'socio') {
+      fetch('/api/tolva/cruce?dias=14')
+        .then(r => r.json())
+        .then(d => {
+          const map = new Map<string, CruceRow>()
+          for (const row of (d.rows ?? []) as CruceRow[]) map.set(`${row.log_date}:${row.shift}`, row)
+          setCruce(map)
+          if (d.gr_por_cafe) setGrPorCafe(d.gr_por_cafe)
+        })
+        .catch(() => null)
+    }
 
     // Turno actual: si ya existe, cargar sus valores; si no, arrastrar el
     // final del último turno registrado como inicio (como hacen en el cuaderno)
@@ -104,13 +128,16 @@ export default function TolvaPage() {
   // Promedios de consumo por turno (últimos 14 días con datos completos)
   const stats = useMemo(() => {
     const byShift: Record<'TM' | 'TT', number[]> = { TM: [], TT: [] }
+    const diffs: number[] = []
     for (const l of logs) {
       const c = consumption(l)
       if (c != null && c >= 0) byShift[l.shift].push(c)
+      const cr = cruce.get(`${l.log_date}:${l.shift}`)
+      if (cr?.diferencia_gr != null) diffs.push(cr.diferencia_gr)
     }
     const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length) : null
-    return { tm: avg(byShift.TM), tt: avg(byShift.TT) }
-  }, [logs])
+    return { tm: avg(byShift.TM), tt: avg(byShift.TT), diffAvg: avg(diffs) }
+  }, [logs, cruce])
 
   if (profileLoading || loading) return <LoadingState message="Cargando tolva..." />
 
@@ -197,7 +224,7 @@ export default function TolvaPage() {
       {/* Promedios */}
       {(stats.tm != null || stats.tt != null) && (
         <FadeIn delay={0.08}>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={`grid gap-2 ${stats.diffAvg != null ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <div className="rounded-2xl bg-[#fdf6ec] p-3 text-center">
               <p className="text-[10px] font-bold uppercase tracking-wider text-[#d4943a]">Promedio TM</p>
               <p className="font-display text-xl font-bold text-[#d4943a]">{stats.tm ?? '—'} gr</p>
@@ -206,6 +233,16 @@ export default function TolvaPage() {
               <p className="text-[10px] font-bold uppercase tracking-wider text-[#4a90d9]">Promedio TT</p>
               <p className="font-display text-xl font-bold text-[#4a90d9]">{stats.tt ?? '—'} gr</p>
             </div>
+            {stats.diffAvg != null && (
+              <div className={`rounded-2xl p-3 text-center ${Math.abs(stats.diffAvg) <= 50 ? 'bg-green-50' : Math.abs(stats.diffAvg) <= 100 ? 'bg-amber-50' : 'bg-red-50'}`}>
+                <p className={`text-[10px] font-bold uppercase tracking-wider ${Math.abs(stats.diffAvg) <= 50 ? 'text-green-600' : Math.abs(stats.diffAvg) <= 100 ? 'text-amber-600' : 'text-red-600'}`}>
+                  Dif. tolva/ventas
+                </p>
+                <p className={`font-display text-xl font-bold ${Math.abs(stats.diffAvg) <= 50 ? 'text-green-600' : Math.abs(stats.diffAvg) <= 100 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {stats.diffAvg > 0 ? '+' : ''}{stats.diffAvg} gr
+                </p>
+              </div>
+            )}
           </div>
         </FadeIn>
       )}
@@ -219,20 +256,35 @@ export default function TolvaPage() {
           <div className="divide-y divide-[#ebe6df]/60">
             {logs.map(l => {
               const c = consumption(l)
+              const cr = cruce.get(`${l.log_date}:${l.shift}`)
+              const diff = cr?.diferencia_gr ?? null
+              const diffColor = diff == null ? '' : Math.abs(diff) <= 50 ? 'text-green-600' : Math.abs(diff) <= 100 ? 'text-amber-600' : 'text-red-600'
               return (
-                <div key={l.id} className="flex items-center justify-between px-4 py-2.5">
-                  <div>
-                    <p className="text-xs font-semibold capitalize text-[#3d2c24]">
-                      {format(new Date(l.log_date + 'T12:00:00'), 'EEE d/M', { locale: es })} · {l.shift}
-                    </p>
-                    <p className="text-[10px] text-[#a39e97]">
-                      {l.start_gr ?? '—'} gr {l.added_gr > 0 && `+ ${l.added_gr}`} → {l.end_gr ?? 'abierto'}
-                    </p>
+                <div key={l.id} className="px-4 py-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-semibold capitalize text-[#3d2c24]">
+                        {format(new Date(l.log_date + 'T12:00:00'), 'EEE d/M', { locale: es })} · {l.shift}
+                      </p>
+                      <p className="text-[10px] text-[#a39e97]">
+                        {l.start_gr ?? '—'} gr {l.added_gr > 0 && `+ ${l.added_gr}`} → {l.end_gr ?? 'abierto'}
+                      </p>
+                    </div>
+                    {c != null ? (
+                      <span className="rounded-full bg-[#8b5e34]/10 px-2.5 py-1 text-[11px] font-bold text-[#8b5e34]">{c} gr</span>
+                    ) : (
+                      <span className="rounded-full bg-[#f3efe9] px-2.5 py-1 text-[10px] font-semibold text-[#a39e97]">sin cerrar</span>
+                    )}
                   </div>
-                  {c != null ? (
-                    <span className="rounded-full bg-[#8b5e34]/10 px-2.5 py-1 text-[11px] font-bold text-[#8b5e34]">{c} gr</span>
-                  ) : (
-                    <span className="rounded-full bg-[#f3efe9] px-2.5 py-1 text-[10px] font-semibold text-[#a39e97]">sin cerrar</span>
+                  {cr && cr.cafes_vendidos > 0 && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px]">
+                      <span className="text-[#a39e97]">☕ {cr.cafes_vendidos} cafés · esperado: {cr.consumo_esperado_gr} gr ({grPorCafe} gr/c)</span>
+                      {diff != null && (
+                        <span className={`font-bold ${diffColor}`}>
+                          · {diff > 0 ? '+' : ''}{diff} gr
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               )

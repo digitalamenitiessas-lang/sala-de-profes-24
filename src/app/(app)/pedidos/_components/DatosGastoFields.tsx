@@ -20,6 +20,8 @@ export function useDatosGasto(supplierId: string | null | undefined) {
   const [categoriaId, setCategoriaId] = useState('')
   const [comprobante, setComprobante] = useState<ComprobanteTipo>('sin_comprobante')
   const [numero, setNumero] = useState('')
+  // Número de la última carga de HOY de este proveedor (misma factura)
+  const [numeroAnterior, setNumeroAnterior] = useState<string | null>(null)
   const [iva, setIva] = useState('')
   const [iibb, setIibb] = useState('')
 
@@ -34,6 +36,7 @@ export function useDatosGasto(supplierId: string | null | undefined) {
         // Lo último que se usó con este proveedor
         if (d.ultima?.categoriaId) setCategoriaId(d.ultima.categoriaId)
         if (COMPROBANTES.some((c) => c.key === d.ultima?.comprobante)) setComprobante(d.ultima.comprobante)
+        if (typeof d.ultima?.numero === 'string' && d.ultima.numero) { setNumero(d.ultima.numero); setNumeroAnterior(d.ultima.numero) }
       })
       .catch(() => { if (alive) setErrorFudo('No se pudieron traer las categorías') })
       .finally(() => { if (alive) setCargando(false) })
@@ -56,14 +59,14 @@ export function useDatosGasto(supplierId: string | null | undefined) {
 
   return {
     datos, falta,
-    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, iva, setIva, iibb, setIibb },
+    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb },
   }
 }
 
 const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none'
 
 export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDatosGasto>['campos'] }) {
-  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, iva, setIva, iibb, setIibb } = campos
+  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb } = campos
   return (
     <div className="space-y-2.5 rounded-xl bg-[#faf8f5] p-3">
       <label className="block">
@@ -111,7 +114,14 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
       </div>
 
       {comprobante !== 'sin_comprobante' && (
-        <input value={numero} onChange={(e) => setNumero(e.target.value)} maxLength={45} placeholder="Número (ej: 0001-00012345)" className={inputCls} />
+        <div className="space-y-1">
+          <input value={numero} onChange={(e) => setNumero(e.target.value)} maxLength={45} placeholder="Número (ej: 0001-00012345)" className={inputCls} />
+          <p className="text-[10.5px] text-[#a39e97]">
+            {numeroAnterior && numero.trim() === numeroAnterior
+              ? 'Es el mismo número que la carga anterior de hoy: se suma a ese gasto en Fudo. Si es otra factura, cambialo.'
+              : 'Misma factura cargada producto por producto: poné el mismo número y queda un solo gasto en Fudo.'}
+          </p>
+        </div>
       )}
 
       {comprobante === 'factura_a' && (

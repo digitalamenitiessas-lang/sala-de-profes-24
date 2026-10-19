@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
+import { COUNT_STOCK_ROLES } from '@/lib/roles'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { conteosDeHoy, estadoConteoHoy, resumenParaNotificacion, type LineaConteoDia } from '@/lib/stock/conteo-diario'
@@ -18,7 +19,8 @@ import { conteosDeHoy, estadoConteoHoy, resumenParaNotificacion, type LineaConte
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const ROLES = ['socio', 'encargado', 'chef', 'cocina', 'barista']
+// Los mismos que cuentan stock (antes era una lista aparte y dejaba afuera al runner)
+const ROLES = COUNT_STOCK_ROLES
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function GET() {
