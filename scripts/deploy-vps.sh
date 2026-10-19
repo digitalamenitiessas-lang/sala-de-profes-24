@@ -15,7 +15,7 @@ set -euo pipefail
 
 VPS=root@2.25.185.242
 APP=/home/salaprofes24/sala-de-profes-24
-URL=https://salaprofes24.2-25-185-242.sslip.io
+URL=https://lve24.com.ar
 
 if [ -n "$(git status --porcelain)" ]; then echo "❌ Hay cambios sin commitear."; exit 1; fi
 if [ "$(git rev-parse main)" != "$(git rev-parse origin/main 2>/dev/null)" ]; then

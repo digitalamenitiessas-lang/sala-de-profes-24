@@ -205,14 +205,14 @@ con el mismo esquema que Casa Fe, Citify y Malala. La base sigue en Supabase.
 
 | | |
 |---|---|
-| **Dirección provisoria** | https://salaprofes24.2-25-185-242.sslip.io |
+| **Dirección** | **https://lve24.com.ar** (desde el 19/10 a la noche). `www` y el link provisorio de sslip.io redirigen acá |
 | Servidor | `root@2.25.185.242` (Ubuntu 24.04, 1 núcleo, 3,8 GB) |
 | Usuario / código | `salaprofes24` (sin shell) · `/home/salaprofes24/sala-de-profes-24` (clon, rama `main`) |
 | Variables | `/etc/salaprofes24/app.env` (640 root:salaprofes24). **No** tiene `LVE_DB_URL` ni `SUPABASE_DB_URL` (la app no las usa) |
 | Servicio | `salaprofes24.service` → `next start -H 127.0.0.1 -p 3070` · Nice=10 · MemoryMax=1G · Restart=always |
-| Caddy | `/etc/caddy/salaprofes24.caddy` (import al final del Caddyfile) |
+| Caddy | `/etc/caddy/salaprofes24.caddy` (lve24.com.ar + www + sslip.io redirigiendo; las `/api` de sslip siguen respondiendo) |
 | Crons | `/etc/cron.d/salaprofes24` (13: los de vercel.json salvo el festejo del 19/10, a 127.0.0.1:3070) · secreto en `/etc/salaprofes24/cron.curlrc` (600) · log `/var/log/salaprofes24-cron.log` |
-| Relojes de Supabase | Los 7 de pg_cron apuntan a la dirección provisoria |
+| Relojes de Supabase | Los 7 de pg_cron apuntan a `https://lve24.com.ar` |
 
 **Deploy (reemplaza a Vercel):** con `main` pusheado, `bash scripts/deploy-vps.sh`. La VPS no tiene
 acceso al repo privado: el script lleva el código como `git bundle`. Para que la VPS pueda hacer
@@ -253,3 +253,14 @@ Cron nuevo en la VPS: `recordatorio-turno` (21:00 UTC). El del festejo no se agr
 - Con dos turnos el mismo día, el aviso de tardanza del segundo turno compara contra el fichaje de la
   mañana.
 - El runner ahora puede contar stock: mientras no se haga la Puesta a cero, sus conteos escriben en Fudo.
+
+## 12. Dominio propio (19/10)
+
+`lve24.com.ar` (NIC.ar, comprado el 19/10) delegado a **Cloudflare** (la misma cuenta que Citify, Countrify,
+Casa Fe y Malala), con un registro `A @ → 2.25.185.242` y `CNAME www → lve24.com.ar`, los dos en **nube
+gris (DNS only)**. Caddy saca el certificado solo. `NEXT_PUBLIC_APP_URL=https://lve24.com.ar` en `app.env`
+(recompilado). Site URL y Redirect URLs de Supabase actualizadas.
+
+Resuelve el problema de las compañías que no resolvían `sslip.io` (`DNS_PROBE_FINISHED_NXDOMAIN`):
+ya no hace falta cambiar el DNS del celular. El equipo tiene que entrar por **https://lve24.com.ar** y
+reinstalar la app (y reactivar los avisos) una última vez.
