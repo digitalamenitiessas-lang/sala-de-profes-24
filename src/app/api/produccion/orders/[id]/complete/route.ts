@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { logAudit } from '@/lib/audit'
+import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
 
@@ -349,6 +350,9 @@ export async function POST(
       body: `${validatorName ?? 'Alguien'}: "${order.name}"${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
     }).catch(() => {}))
+
+    // Se cerró la producción: toca contar los elaborados (si ya hay una tarea abierta, no se repite)
+    await crearTareaAlTerminarProduccion(admin)
 
     return NextResponse.json({
       success: true,

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
 import { logAudit } from '@/lib/audit'
 import { fechaOperativa } from '@/lib/attendance/jornada'
+import { saleElDia, type Protocolo } from '@/lib/protocolos/protocolos'
 
 // PUT /api/protocolos/config/[id] { horarios?, pasos?, fotos?, activo? } — encargado/socio.
 // Los horarios nuevos aplican desde hoy: se crean las tareas que falten y se
@@ -22,9 +23,13 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (!body) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
 
     const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() }
+    const admin = createAdminClient()
+    // Los que salen al terminar una producción pueden no tener horarios fijos
+    const { data: actual } = await admin.from('protocolos').select('*').eq('id', id).maybeSingle()
+    const sinHorariosOk = Boolean((actual as Protocolo | null)?.al_terminar_produccion)
     if (body.horarios !== undefined) {
       const h = [...new Set((body.horarios ?? []).map((x) => String(x).trim()))].sort()
-      if (h.length === 0 || h.length > 12 || !h.every((x) => HORA.test(x))) return NextResponse.json({ error: 'Horarios inválidos (formato 14:30, entre 1 y 12)' }, { status: 400 })
+      if ((h.length === 0 && !sinHorariosOk) || h.length > 12 || !h.every((x) => HORA.test(x))) return NextResponse.json({ error: 'Horarios inválidos (formato 14:30, entre 1 y 12)' }, { status: 400 })
       cambios.horarios = h
     }
     if (body.pasos !== undefined) {
@@ -39,20 +44,22 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     }
     if (body.activo !== undefined) cambios.activo = Boolean(body.activo)
 
-    const admin = createAdminClient()
-    const { data: prot, error } = await admin.from('protocolos').update(cambios).eq('id', id).select('id, nombre, horarios, activo').maybeSingle()
+    const { data: prot, error } = await admin.from('protocolos').update(cambios).eq('id', id).select('*').maybeSingle()
     if (error) throw error
     if (!prot) return NextResponse.json({ error: 'Protocolo no encontrado' }, { status: 404 })
 
     // Aplicar a hoy
     const hoy = fechaOperativa()
-    if (prot.activo) {
+    // Si hoy no es uno de sus días, no se crean tareas de hoy
+    const hoySale = saleElDia(prot as Protocolo, hoy)
+    if (prot.activo && hoySale && (prot.horarios as string[]).length > 0) {
       await admin.from('protocolo_tareas').upsert((prot.horarios as string[]).map((hora) => ({ protocolo_id: id, fecha: hoy, hora })), { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
     }
-    const sobran = prot.activo ? (prot.horarios as string[]) : []
+    const sobran = prot.activo && hoySale ? (prot.horarios as string[]) : []
     let borrar = admin.from('protocolo_tareas').delete().eq('protocolo_id', id).gte('fecha', hoy).eq('estado', 'pendiente')
     if (sobran.length > 0) borrar = borrar.not('hora', 'in', `(${sobran.map((h) => `"${h}"`).join(',')})`)
-    await borrar
+    // Los de "al terminar producción" no tienen horarios fijos: sus tareas no se borran acá
+    if (!(prot as Protocolo).al_terminar_produccion) await borrar
 
     const { data: yo } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
     const quien = [yo?.first_name, yo?.last_name].filter(Boolean).join(' ') || null

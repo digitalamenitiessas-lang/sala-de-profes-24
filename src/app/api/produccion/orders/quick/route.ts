@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { normalizeToStockUnit } from '@/lib/produccion/units'
 import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
+import { crearTareaAlTerminarProduccion } from '@/lib/protocolos/protocolos'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { snapshotProductionInputCosts, persistProductionCost } from '@/lib/produccion/cost-snapshot'
 import type { Database } from '@/types/database'
@@ -325,6 +326,9 @@ export async function POST(request: NextRequest) {
         expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
       })
 
+      // Terminó la producción ("Lo hice"): toca contar los elaborados
+      await crearTareaAlTerminarProduccion(admin)
+
       return NextResponse.json({
         success: true,
         order_id: orderId,
@@ -456,6 +460,9 @@ export async function POST(request: NextRequest) {
       body: `${authorName}: "${body.name}" — ${outputSummary || 'ver detalle'}${costPerOutputUnit ? ` · $${Math.round(costPerOutputUnit).toLocaleString('es-AR')}/u` : ''}`,
       url: '/stock/produccion',
     }).catch(() => {}))
+
+    // Terminó la producción: toca contar los elaborados
+    await crearTareaAlTerminarProduccion(admin)
 
     return NextResponse.json({
       success: true,

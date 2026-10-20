@@ -24,6 +24,22 @@ export type Protocolo = {
   medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null
   /** Roles del turno a los que se puede asignar (null = cualquiera). Ej. elaborados: cocina y chef */
   roles?: string[] | null
+  /** Días de la semana en que sale (0 = domingo … 6 = sábado). null/vacío = todos los días */
+  dias?: number[] | null
+  /** La tarea no sale por horario: aparece cuando se termina una producción (conteo de elaborados) */
+  al_terminar_produccion?: boolean | null
+}
+
+export const NOMBRE_DIA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+
+/** Día de la semana (0 = domingo) de una fecha operativa YYYY-MM-DD */
+export function diaSemana(fecha: string): number {
+  return new Date(`${fecha}T12:00:00-03:00`).getUTCDay()
+}
+
+/** ¿Este protocolo tiene tareas por horario ese día? */
+export function saleElDia(p: Pick<Protocolo, 'dias'>, fecha: string): boolean {
+  return !p.dias || p.dias.length === 0 || p.dias.includes(diaSemana(fecha))
 }
 export type Tarea = {
   id: string; protocolo_id: string; fecha: string; hora: string
@@ -55,9 +71,11 @@ export function sePuedeCerrar(t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date
 
 /** Crea (si faltan) las tareas del día para cada horario de cada protocolo activo. */
 export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaOperativa()): Promise<void> {
-  const { data: protocolos } = await admin.from('protocolos').select('id, horarios').eq('activo', true)
-  const filas = ((protocolos ?? []) as { id: string; horarios: string[] }[])
-    .flatMap((p) => p.horarios.map((hora) => ({ protocolo_id: p.id, fecha, hora })))
+  // select('*'): tolera que todavía no existan las columnas dias / al_terminar_produccion
+  const { data: protocolos } = await admin.from('protocolos').select('*').eq('activo', true)
+  const filas = ((protocolos ?? []) as Pick<Protocolo, 'id' | 'horarios' | 'dias'>[])
+    .filter((p) => saleElDia(p, fecha))
+    .flatMap((p) => (p.horarios ?? []).map((hora) => ({ protocolo_id: p.id, fecha, hora })))
   if (filas.length === 0) return
   await admin.from('protocolo_tareas').upsert(filas, { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
 }
@@ -194,4 +212,28 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
     }
   }
   return cont
+}
+
+/**
+ * Al terminar una producción: tarea de contar los elaborados (protocolos con
+ * al_terminar_produccion). Si ya hay una de hoy sin hacer, no se crea otra
+ * (varias producciones seguidas = un solo conteo). Best-effort: nunca corta
+ * el cierre de la producción.
+ */
+export async function crearTareaAlTerminarProduccion(admin: SupabaseClient, ahora = new Date()): Promise<void> {
+  try {
+    const { data } = await admin.from('protocolos').select('*').eq('activo', true)
+    const prots = ((data ?? []) as Protocolo[]).filter((p) => p.al_terminar_produccion)
+    if (prots.length === 0) return
+    const fecha = fechaOperativa(ahora)
+    const hora = ahora.toLocaleTimeString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false })
+    for (const p of prots) {
+      const { data: abiertas } = await admin.from('protocolo_tareas').select('id')
+        .eq('protocolo_id', p.id).eq('fecha', fecha).in('estado', ['pendiente', 'asignada']).limit(1)
+      if ((abiertas ?? []).length > 0) continue
+      await admin.from('protocolo_tareas').upsert({ protocolo_id: p.id, fecha, hora }, { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
+    }
+  } catch (err) {
+    console.warn('[crearTareaAlTerminarProduccion]', err instanceof Error ? err.message : err)
+  }
 }

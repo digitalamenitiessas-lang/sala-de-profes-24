@@ -30,6 +30,10 @@ type TareaUI = {
 }
 type ProtocoloUI = {
   id: string; nombre: string; descripcion: string | null; horarios: string[]; pasos: string[]; fotos: string[]; requiere_foto: boolean; activo: boolean
+  /** 0 = domingo … 6 = sábado; vacío = todos los días */
+  dias?: number[] | null
+  /** Sale al terminar una producción, no por horario */
+  al_terminar_produccion?: boolean | null
   medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null; roles?: string[] | null
   /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
   enlace_url?: string | null; enlace_texto?: string | null
@@ -151,7 +155,7 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-[17px] font-bold text-[#3d2c24]"><Sparkles className="size-4 text-[#d4943a]" /> {p.nombre}</h2>
           <p className="mt-0.5 text-[12px] text-[#7d6c64]">
-            {p.activo ? <>Hoy: <b className={hechas === p.tareas.length ? 'text-[#006d5a]' : 'text-[#3d2c24]'}>{hechas} de {p.tareas.length}</b> hechas · {p.horarios.join(' · ')}</> : 'Desactivado'}
+            {p.activo ? <>Hoy: <b className={hechas === p.tareas.length ? 'text-[#006d5a]' : 'text-[#3d2c24]'}>{hechas} de {p.tareas.length}</b> hechas · {cuandoSale(p)}</> : 'Desactivado'}
           </p>
         </div>
         {yo.puede_configurar && (
@@ -212,7 +216,15 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
             </li>
           )
         })}
-        {p.activo && p.tareas.length === 0 && <li className="text-[12.5px] text-[#7d6c64]">No hay horarios cargados.</li>}
+        {p.activo && p.tareas.length === 0 && (
+          <li className="text-[12.5px] text-[#7d6c64]">
+            {p.al_terminar_produccion
+              ? 'Todavía no se terminó ninguna producción hoy: aparece cuando se termina una.'
+              : p.dias && p.dias.length > 0 && !p.dias.includes(diaDeHoyAR())
+                ? `Hoy no le toca (${cuandoSale(p)}).`
+                : 'No hay horarios cargados.'}
+          </li>
+        )}
       </ul>
 
       {p.historial.length > 1 && (
@@ -520,11 +532,30 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
         {!activo && <p className="flex items-center gap-1.5 text-[12px] text-[#b0762a]"><AlertTriangle className="size-3.5" /> Desactivado no genera tareas ni avisos.</p>}
 
         <DialogFooter>
-          <button onClick={() => void guardar()} disabled={guardando || horarios.length === 0 || pasos.length === 0} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3d2c24] py-3 text-[14px] font-bold text-white disabled:opacity-40">
+          <button onClick={() => void guardar()} disabled={guardando || (horarios.length === 0 && !p.al_terminar_produccion) || pasos.length === 0} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3d2c24] py-3 text-[14px] font-bold text-white disabled:opacity-40">
             {guardando && <Loader2 className="size-4 animate-spin" />} Guardar
           </button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
+}
+
+const NOMBRE_DIA_CORTO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+/** "Lun y Jue · 08:30", "Al terminar cada producción", "08:00 · 16:00 · 22:00" */
+function cuandoSale(p: { horarios: string[]; dias?: number[] | null; al_terminar_produccion?: boolean | null }): string {
+  const partes: string[] = []
+  if (p.al_terminar_produccion) partes.push('Al terminar cada producción')
+  if (p.dias && p.dias.length > 0 && p.dias.length < 7) {
+    const d = [...p.dias].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((x) => NOMBRE_DIA_CORTO[x])
+    partes.push(d.length > 1 ? `${d.slice(0, -1).join(', ')} y ${d[d.length - 1]}` : d[0])
+  }
+  if (p.horarios.length > 0) partes.push(p.horarios.join(' · '))
+  return partes.join(' · ')
+}
+
+/** Día de la semana de hoy (operativo, corte 06:00 AR): 0 = domingo */
+function diaDeHoyAR(): number {
+  const ar = new Date(Date.now() - 3 * 3_600_000 - 6 * 3_600_000)
+  return ar.getUTCDay()
 }
