@@ -2,6 +2,9 @@ import path from "node:path";
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // El deploy de la VPS compila en otra carpeta (NEXT_DIST_DIR=.next-nuevo) y
+  // recién al final la cambia por .next: la app sigue andando mientras compila.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   turbopack: {
     root: path.resolve(__dirname),
   },

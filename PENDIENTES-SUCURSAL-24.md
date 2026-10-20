@@ -215,7 +215,10 @@ con el mismo esquema que Casa Fe, Citify y Malala. La base sigue en Supabase.
 | Relojes de Supabase | Los 7 de pg_cron apuntan a `https://lve24.com.ar` |
 
 **Deploy (reemplaza a Vercel):** con `main` pusheado, `bash scripts/deploy-vps.sh`. La VPS no tiene
-acceso al repo privado: el script lleva el código como `git bundle`. Para que la VPS pueda hacer
+acceso al repo privado: el script lleva el código como `git bundle`. Sin cortes: compila en la
+carpeta que no está en uso (`.next-a` / `.next-b`) y recién al final la elige en
+`/etc/salaprofes24/dist.env` y reinicia; para volver a la versión anterior, poner la otra carpeta
+ahí y `systemctl restart salaprofes24`. Para que la VPS pueda hacer
 `git pull` sola, el **dueño del repo** (`digitalamenitiessas-lang`) tiene que agregar una *deploy key*
 de solo lectura (no usar la de `sala-de-profes-LVE` que está en `/root/.ssh`).
 
