@@ -73,8 +73,14 @@ export function sePuedeCerrar(t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date
 export async function asegurarTareasDelDia(admin: SupabaseClient, fecha = fechaOperativa()): Promise<void> {
   // select('*'): tolera que todavía no existan las columnas dias / al_terminar_produccion
   const { data: protocolos } = await admin.from('protocolos').select('*').eq('activo', true)
+  // El día se arma UNA vez: si un control ya tiene tareas ese día, no se le
+  // agregan más. Si no, un cambio de horarios a mitad del día sumaba los
+  // nuevos encima de los ya asignados (tolva con 5 controles). Los cambios
+  // desde la pantalla de Protocolos aplican a hoy por su cuenta (config PUT).
+  const { data: yaArmadas } = await admin.from('protocolo_tareas').select('protocolo_id').eq('fecha', fecha)
+  const conTareas = new Set(((yaArmadas ?? []) as { protocolo_id: string }[]).map((t) => t.protocolo_id))
   const filas = ((protocolos ?? []) as Pick<Protocolo, 'id' | 'horarios' | 'dias'>[])
-    .filter((p) => saleElDia(p, fecha))
+    .filter((p) => saleElDia(p, fecha) && !conTareas.has(p.id))
     .flatMap((p) => (p.horarios ?? []).map((hora) => ({ protocolo_id: p.id, fecha, hora })))
   if (filas.length === 0) return
   await admin.from('protocolo_tareas').upsert(filas, { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
