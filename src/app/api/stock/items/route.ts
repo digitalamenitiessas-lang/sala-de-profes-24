@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getStockItems } from '@/lib/queries/stock'
-import { canCountStock } from '@/lib/roles'
+import { canCountStock, isManagerOrAbove } from '@/lib/roles'
+import { isStockArea } from '@/lib/stock/areas'
+import { logAudit } from '@/lib/audit'
 
 // ---------------------------------------------------------------------------
 // GET /api/stock/items
@@ -58,5 +60,80 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error('[GET /api/stock/items]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/stock/items — alta de un producto que NO está en Fudo
+// ---------------------------------------------------------------------------
+// Descartables, limpieza y otros que solo existen en Sala de Profes (vasos,
+// tapas, servilletas…). Queda local (fudo_skip): no se escribe en Fudo. Lo
+// que se usa en recetas se da de alta en Fudo y llega solo con el sync.
+// Encargados y socios. Rechaza un nombre igual a otro activo.
+// Body: { name, unit, area, min_qty?, current_qty? }
+// ---------------------------------------------------------------------------
+
+const UNIDADES = ['unidad', 'paquete', 'caja', 'kg', 'g', 'l', 'ml']
+const CATEGORIA_DE_AREA: Record<string, string> = { descartables: 'desechables', limpieza: 'limpieza', barra: 'bebidas' }
+
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    const admin = createAdminClient()
+    const { data: perfil } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
+    if (!perfil || !isManagerOrAbove(perfil.role)) {
+      return NextResponse.json({ error: 'Solo encargados y socios pueden agregar productos' }, { status: 403 })
+    }
+
+    const body = await request.json().catch(() => null) as { name?: unknown; unit?: unknown; area?: unknown; min_qty?: unknown; current_qty?: unknown } | null
+    const name = typeof body?.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : ''
+    const unit = typeof body?.unit === 'string' ? body.unit : ''
+    const area = body?.area
+    const num = (v: unknown) => (v == null || v === '' ? 0 : Number(String(v).replace(',', '.')))
+    const minQty = num(body?.min_qty)
+    const currentQty = num(body?.current_qty)
+    if (name.length < 2 || name.length > 80) return NextResponse.json({ error: 'Poné un nombre (entre 2 y 80 letras)' }, { status: 400 })
+    if (!UNIDADES.includes(unit)) return NextResponse.json({ error: 'Elegí la unidad' }, { status: 400 })
+    if (!isStockArea(area) || area === 'otros') return NextResponse.json({ error: 'Elegí el área' }, { status: 400 })
+    if (![minQty, currentQty].every((n) => Number.isFinite(n) && n >= 0 && n < 1_000_000)) {
+      return NextResponse.json({ error: 'Las cantidades tienen que ser números de 0 en adelante' }, { status: 400 })
+    }
+
+    // Mismo nombre que otro producto activo → no duplicar
+    const { data: iguales } = await admin.from('stock_items').select('id, name').eq('is_active', true).ilike('name', name).limit(1)
+    if (iguales && iguales.length > 0) {
+      return NextResponse.json({ error: `Ya existe "${iguales[0].name}"`, existente: iguales[0] }, { status: 409 })
+    }
+
+    const { data: creado, error } = await admin.from('stock_items').insert({
+      name,
+      unit,
+      category: CATEGORIA_DE_AREA[area] ?? 'otros',
+      area,
+      area_locked: true,
+      fudo_skip: true,
+      is_active: true,
+      min_qty: minQty,
+      current_qty: currentQty,
+      last_counted_at: currentQty > 0 ? new Date().toISOString() : null,
+    }).select('id, name, unit, area, current_qty, min_qty').single()
+    if (error) throw error
+
+    const quien = [perfil.first_name, perfil.last_name].filter(Boolean).join(' ') || null
+    await admin.from('stock_logs').insert({
+      stock_item_id: creado.id, user_id: user.id, action: 'manual_adjustment', old_qty: 0, new_qty: currentQty,
+      note: `Alta de producto (no está en Fudo)${quien ? ` por ${quien}` : ''}`,
+    })
+    void logAudit(admin, {
+      userId: user.id, userName: quien, action: 'stock_item_created', module: 'stock', entityType: 'stock_item', entityId: creado.id,
+      description: `${quien ?? 'Alguien'} agregó el producto "${name}" (${unit}, ${area}) con ${currentQty} ${unit}`,
+      metadata: { name, unit, area, min_qty: minQty, current_qty: currentQty },
+    })
+    return NextResponse.json({ success: true, item: creado })
+  } catch (err) {
+    console.error('[POST /api/stock/items]', err)
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Error interno' }, { status: 500 })
   }
 }

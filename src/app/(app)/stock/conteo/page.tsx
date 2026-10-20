@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import { FadeIn } from '@/components/ui/motion'
 import { LoadingState } from '@/components/ui/LoadingState'
 import { STOCK_AREAS, areaFromLveCategory, suggestedCountEveryDays, isStockArea, type StockArea } from '@/lib/stock/areas'
+import { coincideBusqueda } from '@/lib/buscar'
 
 // ---------------------------------------------------------------------------
 // Conteo guiado — "qué me toca contar hoy" (o puesta a cero)
@@ -63,11 +64,6 @@ function needsNote(current: number, next: number, unit: string) {
   return abs >= threshold || pct >= 0.25
 }
 
-/** Para buscar sin importar mayúsculas ni tildes */
-function normalizar(s: string) {
-  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-}
-
 export default function ConteoPage() {
   return (
     <Suspense fallback={<LoadingState message="Preparando el conteo..." />}>
@@ -87,7 +83,7 @@ function ConteoContent() {
   const [showAll, setShowAll] = useState(false)
   // Lupa: con algo escrito busca en TODO lo del área (le toque hoy o no)
   const [busqueda, setBusqueda] = useState('')
-  const q = normalizar(busqueda.trim())
+  const q = busqueda.trim()
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
@@ -151,7 +147,7 @@ function ConteoContent() {
       // Lo ya contado en esta pasada se queda a la vista: al guardarlo cambia
       // de bucket (queda "al día") y si no, desaparecía de la lista y la barra
       // de progreso retrocedía.
-      if (q) return normalizar(i.name).includes(q)
+      if (q) return coincideBusqueda(i.name, q)
       if (done[i.id] !== undefined) return true
       if (showAll) return true
       const b = bucketOf(i)

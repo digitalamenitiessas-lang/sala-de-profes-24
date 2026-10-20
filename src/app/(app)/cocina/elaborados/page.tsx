@@ -16,6 +16,7 @@ import { RecetaEditorDialog } from '@/components/produccion/RecetaEditorDialog'
 import { ReportarFaltanteDialog } from '@/components/cocina/ReportarFaltanteDialog'
 import type { Elaborado, ElaboradosPayload } from '@/lib/produccion/elaborados'
 import type { ConteoDelDia } from '@/lib/stock/conteo-diario'
+import { coincideBusqueda } from '@/lib/buscar'
 
 // ---------------------------------------------------------------------------
 // Elaborados de cocina — todo lo que se prepara, en un lugar
@@ -76,8 +77,7 @@ function Elaborados() {
   useEffect(() => { if (puedeVer) void load() }, [puedeVer, load])
 
   const lista = useMemo(() => {
-    const q = normalizar(busqueda.trim())
-    const e = (data?.elaborados ?? []).filter((x) => !q || normalizar(x.name).includes(q))
+    const e = (data?.elaborados ?? []).filter((x) => coincideBusqueda(x.name, busqueda))
     if (filtro === 'sin_receta') return e.filter((x) => !x.receta)
     if (filtro === 'sin_vida') return e.filter((x) => !x.shelf_life_days)
     return e
@@ -288,8 +288,8 @@ function Conteo({ elaborados, busqueda, onListo }: { elaborados: Elaborado[]; bu
 
   // Se guarda TODO lo cargado; la búsqueda solo achica lo que se ve
   const cargados = elaborados.filter((e) => (valores[e.id] ?? '').trim() !== '')
-  const q = normalizar(busqueda.trim())
-  const visibles = q ? elaborados.filter((e) => normalizar(e.name).includes(q)) : elaborados
+  const q = busqueda.trim()
+  const visibles = q ? elaborados.filter((e) => coincideBusqueda(e.name, q)) : elaborados
   const falta = cargados.filter((e) => {
     const n = parseFloat((valores[e.id] ?? '').replace(',', '.'))
     return !Number.isFinite(n) || n < 0 || (necesitaNota(e.current_qty, n, e.unit) && !(notas[e.id] ?? '').trim())
@@ -455,11 +455,6 @@ function ConteoDeHoy({ clave }: { clave: number }) {
       )}
     </div>
   )
-}
-
-/** Para buscar sin importar mayúsculas ni tildes */
-function normalizar(s: string) {
-  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 }
 
 function Buscador({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {

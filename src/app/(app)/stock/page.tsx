@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, X, RefreshCw, Loader2, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle,
-  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package,
+  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package, Plus,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -25,7 +25,9 @@ import {
 } from '@/lib/stock/areas'
 import { esCostoConfiable } from '@/lib/costos/confiable'
 import { CountSheet } from './_components/CountSheet'
+import { AgregarProductoDialog } from './_components/AgregarProductoDialog'
 import { AskBar } from '@/components/ai/AskBar'
+import { coincideBusqueda } from '@/lib/buscar'
 
 // ---------------------------------------------------------------------------
 // /stock — UNA lista, UN semáforo, por ÁREA.
@@ -61,10 +63,6 @@ function isCountDue(item: StockItem): boolean {
   return d >= suggestedCountEveryDays(item)
 }
 
-function normalize(s: string) {
-  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-}
-
 export default function StockPage() {
   return (
     <Suspense fallback={<LoadingState message="Cargando stock..." />}>
@@ -82,6 +80,8 @@ function StockPageContent() {
   const isManager = isManagerOrAbove(profile?.role)
   const canOperate = canCountStock(profile?.role)
   const [faltante, setFaltante] = useState(false)
+  // Alta de un producto que no está en Fudo (encargados y socios)
+  const [agregar, setAgregar] = useState(false)
 
   const areaParam = searchParams.get('area')
   const [area, setArea] = useState<StockArea | 'all'>(isStockArea(areaParam) ? areaParam : 'all')
@@ -154,8 +154,8 @@ function StockPageContent() {
     let list = items
     if (area !== 'all') list = list.filter((i) => areaOf(i) === area)
     if (search.trim()) {
-      const q = normalize(search)
-      list = list.filter((i) => normalize(i.name).includes(q) || normalize(i.fudo_category ?? '').includes(q))
+      // Por palabras: "vaso 6 oz" encuentra "Vaso polipapel 6oz"
+      list = list.filter((i) => coincideBusqueda(i.name, search) || coincideBusqueda(i.fudo_category ?? '', search))
     }
     if (quick === 'criticos') list = list.filter((i) => getSemaphore(i) === 'red')
     else if (quick === 'intermedios') list = list.filter((i) => Boolean(i.is_produced))
@@ -244,6 +244,16 @@ function StockPageContent() {
             </Link>
             {isManager && (
               <button
+                onClick={() => setAgregar(true)}
+                title="Agregar un producto que no está en Fudo (descartables, limpieza…)"
+                className="flex size-8 items-center justify-center rounded-full bg-[#006d5a] text-white active:scale-95"
+                aria-label="Agregar producto"
+              >
+                <Plus className="size-4" />
+              </button>
+            )}
+            {isManager && (
+              <button
                 onClick={() => void runSync()}
                 disabled={syncing}
                 title="Leer stock actual de Fudo"
@@ -330,7 +340,12 @@ function StockPageContent() {
       {groups.length === 0 ? (
         <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
           <Package className="size-8 text-[#ebe6df]" />
-          <p className="mt-3 text-sm font-medium text-[#7d6c64]">Nada para mostrar con estos filtros</p>
+          <p className="mt-3 text-sm font-medium text-[#7d6c64]">{search.trim() ? `No hay ningún producto con “${search.trim()}”` : 'Nada para mostrar con estos filtros'}</p>
+          {isManager && search.trim() && (
+            <button onClick={() => setAgregar(true)} className="mt-3 flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-4 py-2 text-[13px] font-semibold text-white active:scale-95">
+              <Plus className="size-4" /> Agregar “{search.trim()}”
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -394,6 +409,15 @@ function StockPageContent() {
       </div>
 
       {faltante && <ReportarFaltanteDialog onClose={() => setFaltante(false)} />}
+      {agregar && (
+        <AgregarProductoDialog
+          existentes={items}
+          nombreInicial={filtered.length === 0 ? search.trim() : ''}
+          areaInicial={area !== 'all' ? area : null}
+          onClose={() => setAgregar(false)}
+          onCreado={() => { setAgregar(false); void mutate() }}
+        />
+      )}
 
       {isManager && area === 'descartables' && (
         <Link href="/stock/descartables" className="block rounded-xl bg-[#e8f5f1] px-4 py-3 text-[13px] font-semibold text-[#006d5a]">
