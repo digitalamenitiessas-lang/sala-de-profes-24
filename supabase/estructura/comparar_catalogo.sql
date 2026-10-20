@@ -28,5 +28,5 @@ union all select 'AUTH-TRG '||tgname||' '||tgfoid::regproc::text from pg_trigger
 union all select 'BUCKET '||id||' public='||public||' limit='||coalesce(file_size_limit::text,'-')||' mime='||coalesce(array_to_string(allowed_mime_types,','),'-') from storage.buckets
 union all select 'STORAGE-POL '||policyname||' '||cmd||' '||array_to_string(roles,',')||' U='||coalesce(qual,'-')||' C='||coalesce(with_check,'-') from pg_policies where schemaname='storage'
 union all select 'RT '||schemaname||'.'||tablename from pg_publication_tables where pubname='supabase_realtime'
-union all select 'CRON '||jobname||' ['||schedule||'] '||regexp_replace(regexp_replace(command, 'https://[a-z0-9.-]+\.vercel\.app', 'https://<APP>', 'g'), '\s+', ' ', 'g') from cron.job
+union all select 'CRON '||jobname||' ['||schedule||'] '||regexp_replace(regexp_replace(command, 'https://([a-z0-9.-]+\.vercel\.app|lve24\.com\.ar)', 'https://<APP>', 'g'), '\s+', ' ', 'g') from cron.job
 order by 1;
