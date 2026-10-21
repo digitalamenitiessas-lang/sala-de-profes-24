@@ -5,7 +5,8 @@ import { logAudit } from '@/lib/audit'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { saleElDia, type Protocolo } from '@/lib/protocolos/protocolos'
 
-// PUT /api/protocolos/config/[id] { horarios?, pasos?, fotos?, activo? } — encargado/socio.
+// PUT /api/protocolos/config/[id] { horarios?, dias?, pasos?, fotos?, activo? } — encargado/socio.
+// dias: 0 = domingo … 6 = sábado; vacío (o los 7) = todos los días.
 // Los horarios nuevos aplican desde hoy: se crean las tareas que falten y se
 // borran las de horarios quitados que todavía no se asignaron ni hicieron.
 export const dynamic = 'force-dynamic'
@@ -19,7 +20,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (auth.response) return auth.response
     const { id } = await params
     if (!UUID.test(id)) return NextResponse.json({ error: 'Protocolo inválido' }, { status: 400 })
-    const body = await request.json().catch(() => null) as { horarios?: string[]; pasos?: string[]; fotos?: string[]; activo?: boolean } | null
+    const body = await request.json().catch(() => null) as { horarios?: string[]; dias?: number[] | null; pasos?: string[]; fotos?: string[]; activo?: boolean } | null
     if (!body) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
 
     const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -31,6 +32,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       const h = [...new Set((body.horarios ?? []).map((x) => String(x).trim()))].sort()
       if ((h.length === 0 && !sinHorariosOk) || h.length > 12 || !h.every((x) => HORA.test(x))) return NextResponse.json({ error: 'Horarios inválidos (formato 14:30, entre 1 y 12)' }, { status: 400 })
       cambios.horarios = h
+    }
+    if (body.dias !== undefined) {
+      const d = [...new Set((body.dias ?? []).map(Number))].sort((a, b) => a - b)
+      if (!d.every((x) => Number.isInteger(x) && x >= 0 && x <= 6)) return NextResponse.json({ error: 'Días inválidos' }, { status: 400 })
+      cambios.dias = d.length === 0 || d.length === 7 ? null : d
     }
     if (body.pasos !== undefined) {
       const p = (body.pasos ?? []).map((x) => String(x).trim().slice(0, 120)).filter(Boolean)

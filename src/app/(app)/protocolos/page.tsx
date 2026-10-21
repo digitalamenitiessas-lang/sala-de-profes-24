@@ -448,6 +448,8 @@ function FotoSlot({ etiqueta, onFoto }: { etiqueta: string; onFoto: (b: Blob) =>
 
 function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => void; onDone: () => void }) {
   const [horarios, setHorarios] = useState<string[]>(p.horarios)
+  // Días en que sale (0 = domingo); ninguno marcado = todos los días
+  const [dias, setDias] = useState<number[]>(p.dias ?? [])
   const [pasos, setPasos] = useState<string[]>(p.pasos)
   const [fotosCfg, setFotosCfg] = useState<string[]>(p.fotos?.length ? p.fotos : ['Foto general'])
   const [nuevaFoto, setNuevaFoto] = useState('')
@@ -459,7 +461,7 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
   async function guardar() {
     setGuardando(true)
     try {
-      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ horarios, pasos, fotos: fotosCfg, activo }) })
+      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ horarios, dias, pasos, fotos: fotosCfg, activo }) })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo guardar')
       toast.success('Protocolo actualizado')
@@ -491,6 +493,27 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
           </div>
           <p className="mt-1 text-[11.5px] text-[#7d6c64]">A cada horario le llega el aviso al encargado de turno. Cambia desde hoy.</p>
         </div>
+
+        {!p.al_terminar_produccion && (
+          <div>
+            <p className="mb-1.5 text-[12.5px] font-semibold text-[#3d2c24]">Días</p>
+            <div className="flex flex-wrap gap-1.5">
+              {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+                const marcado = dias.includes(d)
+                return (
+                  <button key={d} type="button" aria-pressed={marcado}
+                    onClick={() => setDias((x) => (marcado ? x.filter((y) => y !== d) : [...x, d].sort((a, b) => a - b)))}
+                    className={cn('rounded-full px-3 py-1 text-[13px] font-semibold ring-1', marcado ? 'bg-[#3d2c24] text-white ring-[#3d2c24]' : 'bg-white text-[#3d2c24] ring-[#ebe6df]')}>
+                    {NOMBRE_DIA_CORTO[d]}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="mt-1 text-[11.5px] text-[#7d6c64]">
+              {dias.length === 0 || dias.length === 7 ? 'Sin marcar: sale todos los días.' : 'Solo sale los días marcados. Si hoy no es uno, se sacan las tareas de hoy que nadie tomó.'}
+            </p>
+          </div>
+        )}
 
         <div>
           <p className="mb-1.5 text-[12.5px] font-semibold text-[#3d2c24]">Pasos (todos obligatorios)</p>
