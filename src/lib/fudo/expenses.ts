@@ -314,6 +314,14 @@ const MEDIO_FUDO_RESPALDO: Record<string, string> = (() => {
 })()
 let mediosCache: { at: number; map: Record<string, string> } | null = null
 
+/**
+ * Caja de Fudo donde entran los pagos en efectivo ("Usar en arqueo" + caja),
+ * igual que los gastos que el equipo carga a mano. La API no lista cajas: en
+ * Santa Fe hay una sola, la 1 (verificado en los gastos en efectivo el 22/10).
+ * FUDO_CAJA_ID permite cambiarla sin tocar código.
+ */
+const CAJA_LOCAL = process.env.FUDO_CAJA_ID || '1'
+
 /** PaymentMethod de Fudo para un medio de Sala de Profes (efectivo, transferencia, tarjeta, cuenta_corriente). */
 export async function fudoPaymentMethodId(medio: string | null | undefined): Promise<string> {
   const clave = medio && MEDIOS_PAGO.includes(medio) ? medio : 'efectivo'
@@ -355,14 +363,30 @@ export async function medioLveDesdeFudo(fudoId: string): Promise<string | null> 
 /** Imputa un pago a un gasto de Fudo con su medio real. */
 export async function postFudoPayment(params: { expenseId: string; amount: number; medio: string | null | undefined }) {
   // Un pago no puede ser "cuenta corriente" (eso es deber): sin medio real, efectivo
-  const medioId = await fudoPaymentMethodId(params.medio === 'cuenta_corriente' ? 'efectivo' : params.medio)
-  return fudoFetch('/payments', {
+  const medio = params.medio === 'cuenta_corriente' ? 'efectivo' : params.medio
+  const medioId = await fudoPaymentMethodId(medio)
+  const enEfectivo = (medio ?? 'efectivo') === 'efectivo'
+  const res = await fudoFetch<{ data?: { id?: string } }>('/payments', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ data: { type: 'Payment', attributes: { amount: params.amount },
-      relationships: { paymentMethod: { data: { type: 'PaymentMethod', id: medioId } },
-        expense: { data: { type: 'Expense', id: params.expenseId } } } } }),
+      relationships: {
+        paymentMethod: { data: { type: 'PaymentMethod', id: medioId } },
+        expense: { data: { type: 'Expense', id: params.expenseId } },
+        // Efectivo: sale del cajón → a la caja, para que lo descuente el arqueo
+        ...(enEfectivo ? { cashRegister: { data: { type: 'CashRegister', id: CAJA_LOCAL } } } : {}),
+      } } }),
   })
+  // "Usar en arqueo" del pago (el alta de pagos no lo recibe; se marca después)
+  const pagoId = res?.data?.id
+  if (enEfectivo && pagoId) {
+    await fudoFetch(`/payments/${encodeURIComponent(pagoId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: pagoId, type: 'Payment', attributes: { useInCashCount: true } } }),
+    }).catch((e) => console.warn('[postFudoPayment] no se pudo marcar "usar en arqueo":', e instanceof Error ? e.message : e))
+  }
+  return res
 }
 
 /** ¿El gasto ya figura pagado en Fudo? (p. ej. por una orden de pago hecha en Fudo) */
@@ -393,12 +417,15 @@ export async function fudoExpenseBody(params: {
         date,
         ...(gasto?.numero ? { receiptNumber: gasto.numero } : {}),
         ...(descripcion ? { description: descripcion } : {}),
+        // Pagado en efectivo: cuenta en el arqueo de la caja (como lo cargan a mano)
+        ...(medioPago === 'efectivo' ? { useInCashCount: true } : {}),
       },
       relationships: {
         provider: { data: { type: 'Provider', id: fudoProviderId } },
         ...(gasto?.categoriaId ? { expenseCategory: { data: { type: 'ExpenseCategory', id: gasto.categoriaId } } } : {}),
         ...(tipoId ? { receiptType: { data: { type: 'ReceiptType', id: tipoId } } } : {}),
         ...(medioId ? { paymentMethod: { data: { type: 'PaymentMethod', id: medioId } } } : {}),
+        ...(medioPago === 'efectivo' ? { cashRegister: { data: { type: 'CashRegister', id: CAJA_LOCAL } } } : {}),
       },
     },
   }
