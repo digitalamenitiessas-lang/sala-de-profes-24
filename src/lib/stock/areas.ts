@@ -113,10 +113,13 @@ export function mapFudoProductCategory(fudoCategory: string | null | undefined):
   // stock (no como ingredientes): mismo criterio que mapFudoIngredientCategory.
   if (c.includes('limpieza')) return { area: 'limpieza', category: 'limpieza' }
   if (c.includes('descart')) return { area: 'descartables', category: 'desechables' }
-  if (c.includes('pastel') || c.includes('postre') || c.includes('desayuno') || c.includes('merienda')) {
+  // En la 24 la pastelería de mostrador está en "Team Dulce" / "Team Salado"
+  // (galletitas, lingotes, bollitos, chipá), las gaseosas y aguas en "Refrescos"
+  // y las bebidas con alcohol en "Cervezas", "Vinos" y "Tragos".
+  if (c.includes('pastel') || c.includes('postre') || c.includes('desayuno') || c.includes('merienda') || c.includes('team dulce') || c.includes('team salado')) {
     return { area: 'pasteleria', category: 'panaderia' }
   }
-  if (c.includes('bebida') || c.includes('leche') || c.includes('cafe') || c.includes('infusion') || c.includes('copa') || c.includes('filtrado')) {
+  if (c.includes('bebida') || c.includes('refresc') || c.includes('gaseosa') || c.includes('cerveza') || c.includes('vino') || c.includes('trago') || c.includes('leche') || c.includes('cafe') || c.includes('infusion') || c.includes('copa') || c.includes('filtrado')) {
     return { area: 'barra', category: 'bebidas' }
   }
   // Platos, entradas, pizzas, take away, PEYA, personal, etc.
