@@ -9,7 +9,7 @@ import { ArrowLeft, Check, ClipboardPaste, Loader2, Plus, Search, Send, Shopping
 import { cn } from '@/lib/utils'
 import { isManagerOrAbove } from '@/lib/roles'
 import { useProfileContext } from '@/lib/hooks/use-profile'
-import { detalleDe, leerListaPegada, type InsumoPedible } from '@/lib/compras/lista-pegada'
+import { detalleDe, leerListaPegada, sugerirInsumo, type InsumoPedible } from '@/lib/compras/lista-pegada'
 
 // ---------------------------------------------------------------------------
 // Sugerir compra — cualquier empleado avisa lo que se está acabando
@@ -171,7 +171,13 @@ export default function SugerirCompra() {
                 <p className="truncate text-[13px] font-semibold text-[#3d2c24]">{r.insumo?.name ?? r.nombre}</p>
                 {r.insumo
                   ? (detalleDe(r.nombre, r.insumo.name) && <p className="truncate text-[10.5px] text-[#a39e97]">escribiste: {r.nombre}</p>)
-                  : <p className="text-[10.5px] text-[#b0762a]">No está en la app: va como texto</p>}
+                  : (() => {
+                      // Escrito a mano: si se parece a un insumo, ofrecerlo (si no, no suma stock al llegar)
+                      const s = sugerirInsumo(r.nombre, insumos)
+                      return s
+                        ? <button onClick={() => cambiar(r.key, { insumo: s })} className="mt-0.5 rounded-md bg-[#006d5a] px-2 py-0.5 text-[10.5px] font-semibold text-white">¿Es «{s.name}»? Tocá para elegirlo</button>
+                        : <p className="text-[10.5px] text-[#b0762a]">No está en la app: va como texto (no va a sumar stock)</p>
+                    })()}
               </div>
               <input
                 ref={idx === renglones.length - 1 ? ultimaCantidad : undefined}

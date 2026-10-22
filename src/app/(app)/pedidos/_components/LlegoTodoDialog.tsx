@@ -6,7 +6,8 @@ import { Check, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { createClient } from '@/lib/supabase/client'
-import { PAYMENT_METHODS, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
+import { PAYMENT_METHODS, esComprable, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
+import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { DatosGastoFields, useDatosGasto } from './DatosGastoFields'
 
 // ---------------------------------------------------------------------------
@@ -29,6 +30,8 @@ type FilaLlegada = {
   note: string
   expiresAt: string
   abierto: boolean
+  /** Insumo: el del pedido, o el que se eligió acá (pedido escrito a mano) */
+  stockItemId: string | null
 }
 
 export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, onClose, onDone }: {
@@ -41,6 +44,7 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
 }) {
   const [filas, setFilas] = useState<FilaLlegada[]>(() => orders.map((o) => ({
     order: o, llego: true, noVino: false, qty: o.quantity, total: '', note: '', expiresAt: '', abierto: false,
+    stockItemId: o.stock_item_id ?? null,
   })))
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [factura, setFactura] = useState('')
@@ -65,12 +69,13 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
   const [errores, setErrores] = useState<Record<number, string>>({})
 
   const stockById = new Map(stockItems.map((s) => [s.id, s]))
+  const comprables = stockItems.filter(esComprable)
   const set = (i: number, patch: Partial<FilaLlegada>) => setFilas((f) => f.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const llegan = filas.filter((f) => f.llego)
   const noVienen = filas.filter((f) => !f.llego && f.noVino)
   const sumaProductos = llegan.reduce((a, f) => { const n = parseQty(f.total); return a + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
   const facturaNum = parseQty(factura)
-  const faltaCantidad = llegan.some((f) => f.order.stock_item_id && !(parseQty(f.qty) > 0))
+  const faltaCantidad = llegan.some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
   // Categoría del gasto: obligatoria cuando la compra tiene monto
   const datosGasto = useDatosGasto(supplier?.id)
   const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
@@ -101,7 +106,7 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
               llego: f.llego,
               noVino: !f.llego && f.noVino,
               receivedQty: f.qty,
-              stockItemId: f.order.stock_item_id,
+              stockItemId: f.stockItemId,
               totalCost: Number.isFinite(t) && t > 0 ? t : null,
               expiresAt: f.expiresAt || null,
               note: f.note.trim() || null,
@@ -194,7 +199,9 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
             </div>
             <div className="space-y-1.5">
               {filas.map((f, i) => {
-                const si = f.order.stock_item_id ? stockById.get(f.order.stock_item_id) : null
+                const si = f.stockItemId ? stockById.get(f.stockItemId) : null
+                // Pedido escrito a mano ("1/2 kg de palta"): el insumo que corresponde
+                const sugerido = !si ? sugerirInsumo(f.order.product_name, comprables) : null
                 const match = matchByOrder.get(`${f.order.source}-${f.order.id}`)
                 const err = errores[f.order.id]
                 return (
@@ -214,8 +221,22 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
                           Pedido: {f.order.quantity}
                           {!f.llego && !f.noVino && <span className="font-semibold text-[#d4943a]"> · no llegó: sigue en camino</span>}
                           {!f.llego && f.noVino && <span className="font-semibold text-[#ea504c]"> · no vino: se cierra sin stock ni gasto</span>}
-                          {f.llego && !si && <span> · sin insumo vinculado: no mueve stock</span>}
                         </p>
+                        {f.llego && !si && (
+                          <div className="mt-1 rounded-lg bg-[#fef2f2] px-2 py-1.5">
+                            <p className="text-[10.5px] font-semibold text-[#ea504c]">Sin insumo: no suma stock (ni acá ni en Fudo)</p>
+                            {sugerido && (
+                              <button type="button" onClick={() => set(i, { stockItemId: sugerido.id })} className="mt-1 flex items-center gap-1 rounded-md bg-[#006d5a] px-2 py-1 text-[11px] font-semibold text-white active:scale-95">
+                                <Check className="size-3" /> Es «{sugerido.name}»
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {f.llego && si && f.stockItemId !== (f.order.stock_item_id ?? null) && (
+                          <p className="mt-0.5 text-[10.5px] text-[#006d5a]">
+                            Insumo: <b>{si.name}</b> · <button type="button" onClick={() => set(i, { stockItemId: f.order.stock_item_id ?? null })} className="underline">quitar</button>
+                          </p>
+                        )}
                         {match && f.llego && (
                           <p className="mt-0.5 text-[10px] font-semibold text-[#4a90d9]">Fudo ya registró {money(match.expense.amount)} de este proveedor</p>
                         )}

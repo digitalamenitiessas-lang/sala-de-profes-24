@@ -45,16 +45,45 @@ function unidad(u: string | undefined, n: number): string {
   return ''
 }
 
-const RE_CANT = String.raw`(\d+(?:[.,]\d+)?)\s*([a-zA-ZáéíóúÁÉÍÓÚ]+)?`
+// Número: entero, decimal, fracción ("1/2", "3/4") o "½ ¼ ¾". Antes "1/2 kg de
+// palta" no se entendía: quedaba todo como nombre y no encontraba el insumo.
+const RE_NUM = String.raw`(\d+\s+\d+\s*\/\s*\d+|\d+\s*\/\s*\d+|\d+(?:[.,]\d+)?|[½¼¾])`
+const RE_CANT = String.raw`${RE_NUM}\s*([a-zA-ZáéíóúÁÉÍÓÚ]+)?`
+const FRACCION: Record<string, number> = { '½': 0.5, '¼': 0.25, '¾': 0.75 }
 
-/** "5k" → "5 kg", "2 cajas" → "2 cajas". Devuelve null si no es una cantidad. */
+/** "1/2" → 0.5, "½" → 0.5, "2,5" → 2.5 (NaN si no es un número) */
+export function leerNumero(s: string): number {
+  const t = s.trim()
+  if (t in FRACCION) return FRACCION[t]
+  const mixto = t.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/) // "1 1/2"
+  if (mixto) return Number(mixto[3]) > 0 ? Number(mixto[1]) + Number(mixto[2]) / Number(mixto[3]) : NaN
+  const f = t.match(/^(\d+)\s*\/\s*(\d+)$/)
+  if (f) return Number(f[2]) > 0 ? Number(f[1]) / Number(f[2]) : NaN
+  return parseFloat(t.replace(',', '.'))
+}
+
+/**
+ * Cantidad escrita con fracción → decimal, para quien la lee con parseFloat:
+ * "1/2kg" → "0,5kg", "½ kg" → "0,5 kg". Sin fracción la devuelve igual.
+ */
+export function fraccionADecimal(s: string): string {
+  return s.replace(/(\d+\s+)?(\d+)\s*\/\s*(\d+)|[½¼¾]/g, (m) => {
+    const n = leerNumero(m)
+    return Number.isFinite(n) ? String(Math.round(n * 1000) / 1000).replace('.', ',') : m
+  })
+}
+
+const fmtNum = (n: number) => String(Math.round(n * 1000) / 1000).replace('.', ',')
+
+/** "5k" → "5 kg", "2 cajas" → "2 cajas", "1/2kg" → "0,5 kg". Devuelve null si no es una cantidad. */
 function leerCantidad(s: string): string | null {
   const m = s.trim().match(new RegExp(`^${RE_CANT}\\.?$`))
   if (!m) return null
-  const n = parseFloat(m[1].replace(',', '.'))
+  const n = leerNumero(m[1])
+  if (!Number.isFinite(n)) return null
   const u = unidad(m[2], n)
   if (m[2] && !u) return null
-  return `${m[1].replace('.', ',')}${u ? ` ${u}` : ''}`
+  return `${fmtNum(n)}${u ? ` ${u}` : ''}`
 }
 
 function separar(linea: string): { nombre: string; cantidad: string } {
@@ -68,12 +97,12 @@ function separar(linea: string): { nombre: string; cantidad: string } {
   // "5k de molida" / "10 kg primo"
   const ini = linea.match(new RegExp(`^${RE_CANT}\\s+(?:de\\s+)?(.+)$`, 'i'))
   if (ini) {
-    const n = parseFloat(ini[1].replace(',', '.'))
+    const n = leerNumero(ini[1])
     const u = unidad(ini[2], n)
-    if (u) return { nombre: ini[3].trim(), cantidad: `${ini[1].replace('.', ',')} ${u}` }
-    if (!ini[2]) return { nombre: ini[3].trim(), cantidad: ini[1] }
+    if (u) return { nombre: ini[3].trim(), cantidad: `${fmtNum(n)} ${u}` }
+    if (!ini[2]) return { nombre: ini[3].trim(), cantidad: fmtNum(n) }
     // "5 lomos": la palabra después del número es el producto
-    return { nombre: `${ini[2]} ${ini[3]}`.trim(), cantidad: ini[1] }
+    return { nombre: `${ini[2]} ${ini[3]}`.trim(), cantidad: fmtNum(n) }
   }
   // "Molida 5k" (cantidad al final)
   const fin = linea.match(new RegExp(`^(.+?)\\s+${RE_CANT}$`, 'i'))
@@ -82,6 +111,16 @@ function separar(linea: string): { nombre: string; cantidad: string } {
     if (cant) return { nombre: fin[1].trim(), cantidad: cant }
   }
   return { nombre: linea.trim(), cantidad: '' }
+}
+
+/**
+ * Para un texto escrito a mano ("1/2 kg de palta", "palta — 2 kg"): el insumo
+ * que corresponde, o null. Sirve para sugerirlo al pedir o al recibir.
+ */
+export function sugerirInsumo<T extends InsumoPedible>(texto: string, insumos: T[]): T | null {
+  const limpio = texto.replace(/\s+/g, ' ').trim()
+  if (!limpio) return null
+  return (buscarInsumo(separar(limpio).nombre, insumos) ?? buscarInsumo(limpio, insumos)) as T | null
 }
 
 /** Busca el insumo que mejor corresponde: tienen que estar todas las palabras del pedido. */

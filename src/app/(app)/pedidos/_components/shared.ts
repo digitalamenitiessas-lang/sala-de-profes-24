@@ -1,5 +1,7 @@
 // Tipos y utilidades compartidas de Pedidos (página y diálogos).
 
+import { fraccionADecimal } from '@/lib/compras/lista-pegada'
+
 export type Order = {
   id: number
   product_name: string
@@ -64,7 +66,8 @@ export function money(n: number) { return `$${Math.round(n).toLocaleString('es-A
  */
 export function parseQty(raw: string | undefined | null): number {
   if (raw == null) return NaN
-  const n = parseFloat(String(raw).trim().replace(',', '.'))
+  // "1/2kg" → 0,5 (antes parseFloat leía 1)
+  const n = parseFloat(fraccionADecimal(String(raw)).trim().replace(',', '.'))
   return Number.isFinite(n) ? n : NaN
 }
 

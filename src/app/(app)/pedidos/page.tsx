@@ -25,6 +25,8 @@ import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugeren
 import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
+import { sugerirInsumo } from '@/lib/compras/lista-pegada'
+import { coincideBusqueda } from '@/lib/buscar'
 import { SinPrecioSection, faltaPrecio } from './_components/SinPrecio'
 
 // ---------------------------------------------------------------------------
@@ -1322,8 +1324,10 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   const mode: 'lve_stock' | 'sin_stock' = stockItemId ? 'lve_stock' : 'sin_stock'
   const selectedStock = stockItems.find((s) => s.id === stockItemId) ?? null
   const filteredStock = stockSearch.length > 1
-    ? stockItems.filter((s) => esComprable(s) && s.name.toLowerCase().includes(stockSearch.toLowerCase())).slice(0, 6)
+    ? stockItems.filter((s) => esComprable(s) && coincideBusqueda(s.name, stockSearch)).slice(0, 6)
     : []
+  // Pedido escrito a mano ("1/2 kg de palta"): el insumo que corresponde, para elegirlo en un toque
+  const insumoSugerido = !stockItemId ? sugerirInsumo(order.product_name, stockItems.filter(esComprable)) : null
 
   // Cantidad parseable (acepta coma decimal): "5 kg" → 5
   const qtyNum = parseQty(receivedQty)
@@ -1625,6 +1629,17 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
             </div>
           ) : (
             <div className="space-y-2">
+              {/* Sin insumo no suma stock en ningún lado: avisarlo y sugerir el que corresponde */}
+              <div className="rounded-xl bg-[#fef2f2] px-3 py-2 text-[11.5px] text-[#3d2c24]">
+                <p className="font-semibold text-[#ea504c]">Sin insumo: este producto no suma stock</p>
+                <p className="mt-0.5 text-[#7d6c64]">Ni en Sala de Profes ni en Fudo. Solo queda el gasto. Elegí el insumo para que sume.</p>
+                {insumoSugerido && (
+                  <button type="button" onClick={() => { setStockItemId(insumoSugerido.id); setStockSearch(''); resetMoneyFields() }}
+                    className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[12px] font-semibold text-white active:scale-95">
+                    <Check className="size-3.5" /> Es «{insumoSugerido.name}»
+                  </button>
+                )}
+              </div>
               <div>
                 <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Insumo <span className="font-normal text-[#a39e97]">(si aplica — para actualizar stock)</span></p>
                 <div className="relative">
@@ -1745,6 +1760,15 @@ function NewOrderDialog({ suppliers, stockItems, onClose, onDone }: { suppliers:
                       placeholder="Insumo…"
                       className="w-full rounded-lg border border-[#e6dfd7] bg-white px-2.5 py-1.5 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none"
                     />
+                    {!item.stockItemId && filtered(item.id).length === 0 && item.productName.trim().length > 2 && (() => {
+                      // Escrito a mano ("1/2 kg de palta"): ofrecer el insumo que corresponde
+                      const s = sugerirInsumo(item.productName, stockItems.filter(esComprable))
+                      return s ? (
+                        <button type="button" onClick={() => update(item.id, { productName: s.name, stockItemId: s.id })} className="mt-1 rounded-md bg-[#006d5a] px-2 py-0.5 text-[10.5px] font-semibold text-white">
+                          ¿Es «{s.name}»? Tocá para elegirlo
+                        </button>
+                      ) : null
+                    })()}
                     {!item.stockItemId && filtered(item.id).length > 0 && (
                       <div className="absolute z-20 mt-1 w-full rounded-xl border border-[#ebe6df] bg-white shadow-lg">
                         {filtered(item.id).map((s) => (
