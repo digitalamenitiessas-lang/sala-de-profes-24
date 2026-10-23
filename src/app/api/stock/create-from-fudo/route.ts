@@ -232,12 +232,23 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Uno solo (ej. desde Compras): devolver el insumo para usarlo al toque
+    let item: Record<string, unknown> | null = null
+    if (!all && (targetIngredientId || targetProductId)) {
+      const { data } = await admin.from('stock_items')
+        .select('id, name, unit, current_qty, cost_per_unit, fudo_skip, fudo_ingredient_id, fudo_product_id, supplier_id')
+        .eq(targetIngredientId ? 'fudo_ingredient_id' : 'fudo_product_id', (targetIngredientId ?? targetProductId)!)
+        .eq('is_active', true).limit(1).maybeSingle()
+      item = data
+    }
+
     return NextResponse.json({
       success: errors.length === 0,
       created,
       skipped,
       errors,
       items: createdNames,
+      item,
     })
   } catch (error) {
     console.error('[POST /api/stock/create-from-fudo]', error)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -25,12 +25,16 @@ const UNIDADES = [
 
 const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none'
 
-export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, onClose, onCreado }: {
+export type ProductoCreado = { id: string; name: string; unit: string; area: string; current_qty: number; min_qty: number }
+
+export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, ayuda, onClose, onCreado }: {
   existentes: { id: string; name: string }[]
   nombreInicial?: string
   areaInicial?: StockArea | null
+  /** Reemplaza la aclaración de arriba (ej. desde Compras) */
+  ayuda?: ReactNode
   onClose: () => void
-  onCreado: () => void
+  onCreado: (item: ProductoCreado) => void
 }) {
   const [nombre, setNombre] = useState(nombreInicial ?? '')
   const [unidad, setUnidad] = useState('unidad')
@@ -61,7 +65,7 @@ export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, 
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? 'No se pudo agregar')
       toast.success(`"${json.item?.name ?? nombre.trim()}" agregado al stock`)
-      onCreado()
+      onCreado(json.item as ProductoCreado)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'No se pudo agregar')
     } finally {
@@ -75,7 +79,7 @@ export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, 
         <DialogHeader><DialogTitle className="text-base">Agregar producto</DialogTitle></DialogHeader>
         <div className="max-h-[70vh] space-y-3 overflow-y-auto pr-0.5">
           <p className="rounded-xl bg-[#fdf6ec] px-3 py-2 text-[11.5px] text-[#8b5e34]">
-            Para productos que <b>no están en Fudo</b> (vasos, tapas, servilletas, limpieza…). Si es un insumo que se usa en recetas, cargalo en Fudo: aparece solo al día siguiente.
+            {ayuda ?? <>Para productos que <b>no están en Fudo</b> (vasos, tapas, servilletas, limpieza…). Si es un insumo que se usa en recetas, cargalo en Fudo: aparece solo al día siguiente.</>}
           </p>
 
           <label className="block">

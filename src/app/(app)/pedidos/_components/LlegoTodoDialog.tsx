@@ -2,13 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
-import { Check, Loader2 } from 'lucide-react'
+import { Check, Loader2, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { createClient } from '@/lib/supabase/client'
 import { PAYMENT_METHODS, esComprable, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { DatosGastoFields, useDatosGasto } from './DatosGastoFields'
+import { FilaLlegoDeMas, nuevaFilaExtra, pedirPendientesFudo, traerDeFudo, type FilaExtra, type PendienteFudo } from './LlegoDeMas'
+import { AgregarProductoDialog } from '@/app/(app)/stock/_components/AgregarProductoDialog'
 
 // ---------------------------------------------------------------------------
 // LlegoTodoDialog — recibir todo lo de un proveedor de una vez
@@ -18,6 +20,8 @@ import { DatosGastoFields, useDatosGasto } from './DatosGastoFields'
 // destildarlo: por defecto "sigue en camino", o "no vino" (se cierra solo ese
 // producto, sin stock ni gasto). El medio de pago va una sola vez.
 // El server confirma cada producto con la misma lógica que "Llegó".
+// "+ Llegó algo más" suma lo que vino sin estar en el pedido; sin pedidos
+// (orders vacío) es una compra sin pedido: se elige el proveedor.
 // ---------------------------------------------------------------------------
 
 type FilaLlegada = {
@@ -34,8 +38,10 @@ type FilaLlegada = {
   stockItemId: string | null
 }
 
-export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, onClose, onDone }: {
+export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], orders, stockItems: stockDelPadre, matchByOrder, onClose, onDone }: {
   supplier: Supplier | null
+  /** Para elegir el proveedor en una compra sin pedido */
+  suppliers?: Supplier[]
   orders: Order[]
   stockItems: StockLite[]
   matchByOrder: Map<string, Match>
@@ -48,6 +54,29 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
   })))
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null)
   const [factura, setFactura] = useState('')
+  const sinPedido = orders.length === 0
+  const [proveedorId, setProveedorId] = useState(proveedorDelPedido?.id ?? '')
+  const supplier = proveedorDelPedido ?? suppliers.find((s) => s.id === proveedorId) ?? null
+  // Lo que llegó y no estaba en el pedido (en una compra sin pedido, es todo)
+  const [extras, setExtras] = useState<FilaExtra[]>(() => (sinPedido ? [nuevaFilaExtra()] : []))
+  // Insumos creados o traídos de Fudo acá mismo
+  const [nuevos, setNuevos] = useState<StockLite[]>([])
+  const stockItems = nuevos.length ? [...stockDelPadre, ...nuevos] : stockDelPadre
+  const [fudo, setFudo] = useState<PendienteFudo[] | null>(null)
+  const [cargandoFudo, setCargandoFudo] = useState(false)
+  const [crear, setCrear] = useState<{ key: string; nombre: string } | null>(null)
+  const setExtra = (key: string, patch: Partial<FilaExtra>) => setExtras((x) => x.map((e) => (e.key === key ? { ...e, ...patch } : e)))
+  const usarInsumo = (key: string, item: StockLite) => {
+    setNuevos((n) => [...n.filter((x) => x.id !== item.id), item])
+    setExtra(key, { nombre: item.name, stockItemId: item.id })
+  }
+  function cargarFudo() {
+    setCargandoFudo(true)
+    pedirPendientesFudo()
+      .then(setFudo)
+      .catch(() => setFudo([]))
+      .finally(() => setCargandoFudo(false))
+  }
 
   // Pre-seleccionar el medio de pago del último recibo de este proveedor
   useEffect(() => {
@@ -73,19 +102,21 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
   const set = (i: number, patch: Partial<FilaLlegada>) => setFilas((f) => f.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const llegan = filas.filter((f) => f.llego)
   const noVienen = filas.filter((f) => !f.llego && f.noVino)
-  const sumaProductos = llegan.reduce((a, f) => { const n = parseQty(f.total); return a + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
+  const extrasOk = extras.filter((e) => e.nombre.trim())
+  const cuantosLlegan = llegan.length + extrasOk.length
+  const sumaProductos = [...llegan, ...extrasOk].reduce((a, f) => { const n = parseQty(f.total); return a + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
   const facturaNum = parseQty(factura)
-  const faltaCantidad = llegan.some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
+  const faltaCantidad = [...llegan, ...extrasOk].some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
   // Categoría del gasto: obligatoria cuando la compra tiene monto
   const datosGasto = useDatosGasto(supplier?.id)
   const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
   // Si nada llegó pero hay productos que no vinieron, se puede cerrar sin medio de pago
-  const puede = !enviando && (llegan.length > 0
-    ? !!paymentMethod && !faltaCantidad && !(hayMonto && datosGasto.falta)
+  const puede = !enviando && (cuantosLlegan > 0
+    ? !!paymentMethod && !faltaCantidad && !(hayMonto && datosGasto.falta) && (extrasOk.length === 0 || !!supplier)
     : noVienen.length > 0)
 
   async function confirmar() {
-    if (llegan.length > 0 && !paymentMethod) return
+    if (cuantosLlegan > 0 && !paymentMethod) return
     setEnviando(true)
     setErrores({})
     try {
@@ -98,6 +129,17 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
           invoiceTotal: Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
           note: nota.trim() || null,
           gasto: datosGasto.datos,
+          supplierId: supplier?.id ?? null,
+          extras: extrasOk.map((e) => {
+            const t = parseQty(e.total)
+            return {
+              productName: e.nombre.trim(),
+              receivedQty: e.qty.trim() || null,
+              stockItemId: e.stockItemId,
+              totalCost: Number.isFinite(t) && t > 0 ? t : null,
+              expiresAt: e.expiresAt || null,
+            }
+          }),
           items: filas.map((f) => {
             const t = parseQty(f.total)
             return {
@@ -122,6 +164,7 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
       }
       if (json.recibidos > 0) {
         const quedan = filas.length - llegan.length - noVienen.length
+        if (json.agregados > 0) toast.success(json.agregados === 1 ? 'Lo que llegó de más quedó registrado' : `Los ${json.agregados} que llegaron de más quedaron registrados`)
         toast.success(`Llegaron ${json.recibidos} producto${json.recibidos === 1 ? '' : 's'} de ${supplier?.name ?? 'el proveedor'}${quedan ? ` · ${quedan} ${quedan === 1 ? 'sigue' : 'siguen'} en camino` : ''}`)
         if (json.resto) toast.info(`Resto de la factura sin detallar: ${money(json.resto)} (queda en Pagos)`)
         if (paymentMethod === 'cuenta_corriente') toast.info('Quedó en Pagos pendiente de saldar')
@@ -130,8 +173,11 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
         // Quedan en pantalla solo los que fallaron, con el motivo, para reintentar
         setErrores(Object.fromEntries(fallidos.map((r) => [r.orderId, r.error ?? 'Error'])))
         setFilas((f) => f.filter((x) => fallidos.some((r) => r.orderId === x.order.id)))
-        toast.error(`${fallidos.length} no se pudo${fallidos.length === 1 ? '' : 'eron'} confirmar: revisalos`)
-        if (json.recibidos > 0) onDone()
+        // Lo agregado de más que falló ya quedó como pedido "en camino": se reintenta con "Llegó"
+        const fallaronExtras = fallidos.filter((r) => !filas.some((x) => x.order.id === r.orderId)).length
+        setExtras([])
+        toast.error(`${fallidos.length} no se pudo${fallidos.length === 1 ? '' : 'eron'} confirmar: revisalos${fallaronExtras ? ` (lo agregado de más quedó En camino: tocá Llegó)` : ''}`)
+        if (json.recibidos > 0 || fallaronExtras > 0) onDone()
         return
       }
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo confirmar')
@@ -147,9 +193,14 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md rounded-2xl">
         <DialogHeader>
-          <DialogTitle className="text-base">Llegó el pedido de {supplier?.name ?? 'proveedor'}</DialogTitle>
+          <DialogTitle className="text-base">{sinPedido ? 'Llegó una compra sin pedido' : `Llegó el pedido de ${supplier?.name ?? 'proveedor'}`}</DialogTitle>
           <div className="mt-1 flex items-center gap-2">
-            {supplier ? (
+            {!proveedorDelPedido && (sinPedido || extrasOk.length > 0) ? (
+              <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value)} className={cn('w-full rounded-xl border bg-white px-3 py-2 text-sm text-[#3d2c24] focus:outline-none', proveedorId ? 'border-[#ebe6df]' : 'border-[#d4943a]')}>
+                <option value="">¿De qué proveedor? *</option>
+                {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}{s.fudo_provider_id ? '' : ' (sin Fudo)'}</option>)}
+              </select>
+            ) : supplier ? (
               <>
                 <span className="text-[12px] text-[#7d6c64]">Proveedor: <span className="font-bold text-[#3d2c24]">{supplier.name}</span></span>
                 {supplier.fudo_provider_id && (
@@ -188,14 +239,14 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
           {/* Productos */}
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <p className="text-[12px] font-semibold text-[#3d2c24]">Productos ({llegan.length} de {filas.length} llegaron)</p>
-              <button
+              <p className="text-[12px] font-semibold text-[#3d2c24]">{sinPedido ? 'Qué llegó' : `Productos (${llegan.length} de ${filas.length} llegaron)`}</p>
+              {filas.length > 0 && <button
                 type="button"
                 onClick={() => setFilas((f) => { const todos = f.every((x) => x.llego); return f.map((x) => ({ ...x, llego: !todos })) })}
                 className="text-[11px] font-semibold text-[#006d5a]"
               >
                 {filas.every((f) => f.llego) ? 'Desmarcar todos' : 'Marcar todos'}
-              </button>
+              </button>}
             </div>
             <div className="space-y-1.5">
               {filas.map((f, i) => {
@@ -335,6 +386,31 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
                   </div>
                 )
               })}
+              {extras.map((e) => (
+                <FilaLlegoDeMas
+                  key={e.key}
+                  fila={e}
+                  comprables={comprables}
+                  stockById={stockById}
+                  fudo={fudo}
+                  cargandoFudo={cargandoFudo}
+                  onCargarFudo={cargarFudo}
+                  onTraer={async (p) => {
+                    try {
+                      usarInsumo(e.key, await traerDeFudo(p))
+                      setFudo((f) => f?.filter((x) => !(x.id === p.id && x.tipo === p.tipo)) ?? f)
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : 'No se pudo traer de Fudo')
+                    }
+                  }}
+                  onCrear={(nombre) => setCrear({ key: e.key, nombre })}
+                  onChange={(patch) => setExtra(e.key, patch)}
+                  onQuitar={() => setExtras((x) => x.filter((y) => y.key !== e.key))}
+                />
+              ))}
+              <button type="button" onClick={() => setExtras((x) => [...x, nuevaFilaExtra()])} className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-[#bfdcd3] py-2 text-[12px] font-semibold text-[#006d5a] hover:bg-[#f6fbf9]">
+                <Plus className="size-3.5" /> {sinPedido && extras.length === 0 ? 'Agregar lo que llegó' : 'Llegó algo más (no estaba en el pedido)'}
+              </button>
             </div>
           </div>
 
@@ -366,12 +442,24 @@ export function LlegoTodoDialog({ supplier, orders, stockItems, matchByOrder, on
             className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white active:scale-[0.98] disabled:opacity-60"
           >
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {llegan.length > 0
-              ? `Confirmar ${llegan.length} producto${llegan.length === 1 ? '' : 's'}`
+            {cuantosLlegan > 0
+              ? `Confirmar ${cuantosLlegan} producto${cuantosLlegan === 1 ? '' : 's'}`
               : (noVienen.length === 1 ? 'Marcar 1 que no vino' : `Marcar ${noVienen.length} que no vinieron`)}
           </button>
         </DialogFooter>
       </DialogContent>
+      {crear && (
+        <AgregarProductoDialog
+          existentes={stockItems}
+          nombreInicial={crear.nombre}
+          ayuda={<>Para productos que <b>no están en Fudo</b> (vasos, tapas, limpieza…). Si va en recetas, cargalo primero en Fudo y buscalo acá: aparece como «está en Fudo · traer».</>}
+          onClose={() => setCrear(null)}
+          onCreado={(item) => {
+            usarInsumo(crear.key, { id: item.id, name: item.name, unit: item.unit, current_qty: item.current_qty, fudo_skip: true })
+            setCrear(null)
+          }}
+        />
+      )}
     </Dialog>
   )
 }

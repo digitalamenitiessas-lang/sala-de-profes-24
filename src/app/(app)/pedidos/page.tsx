@@ -839,22 +839,32 @@ function PedidosContent() {
               <Truck className="size-8 text-[#ebe6df]" />
               <p className="mt-3 text-sm font-medium text-[#7d6c64]">Nada en camino</p>
               <p className="mt-1 text-[11px] text-[#a39e97]">Los pedidos enviados al proveedor aparecen acá hasta que confirmás que llegaron.</p>
+              {canManage && (
+                <button onClick={() => setLlegoTodo({ supplier: null, list: [] })} className="mt-4 flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-[12px] font-semibold text-white active:scale-[0.98]">
+                  <Plus className="size-3.5" /> Llegó una compra sin pedido
+                </button>
+              )}
             </div>
           </FadeIn>
         ) : (
           <FadeIn>
             <p className="px-1 text-[11px] text-[#a39e97]">
-              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó todo</strong> para recibir todo lo del proveedor de una vez, o <strong className="text-[#006d5a]">Llegó</strong> en cada producto. Si un producto no vino, tocá <strong className="text-[#ea504c]">No vino</strong>: se cierra solo ese y el resto sigue en camino.
+              Cuando llegue el pedido, tocá <strong className="text-[#006d5a]">Llegó todo</strong> para recibir todo lo del proveedor de una vez (ahí también sumás lo que vino de más), o <strong className="text-[#006d5a]">Llegó</strong> en cada producto. Si un producto no vino, tocá <strong className="text-[#ea504c]">No vino</strong>: se cierra solo ese y el resto sigue en camino.
             </p>
             {canManage && (
-              <button
-                onClick={() => void refreshExpenses()}
-                disabled={refreshingExpenses}
-                className="mt-2 flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#4a90d9] ring-1 ring-[#ebe6df] active:scale-[0.98] disabled:opacity-60"
-              >
-                {refreshingExpenses ? <Loader2 className="size-3.5 animate-spin" /> : <Receipt className="size-3.5" />}
-                Actualizar gastos de Fudo
-              </button>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button onClick={() => setLlegoTodo({ supplier: null, list: [] })} className="flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-[12px] font-semibold text-white active:scale-[0.98]">
+                  <Plus className="size-3.5" /> Llegó una compra sin pedido
+                </button>
+                <button
+                  onClick={() => void refreshExpenses()}
+                  disabled={refreshingExpenses}
+                  className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#4a90d9] ring-1 ring-[#ebe6df] active:scale-[0.98] disabled:opacity-60"
+                >
+                  {refreshingExpenses ? <Loader2 className="size-3.5 animate-spin" /> : <Receipt className="size-3.5" />}
+                  Actualizar gastos de Fudo
+                </button>
+              </div>
             )}
             <div className="mt-2 space-y-2">
               {groupBySupplier(ordered, suppliers).map(({ supplier, list }) => (
@@ -863,12 +873,12 @@ function PedidosContent() {
                     <Package className="size-4 text-[#4a90d9]" />
                     <p className="flex-1 truncate text-[12px] font-bold uppercase tracking-wider text-[#3d2c24]">{supplier?.name ?? 'Sin proveedor'}</p>
                     <span className="text-[11px] tabular-nums text-[#a39e97]">{list.length}</span>
-                    {canManage && list.length > 1 && (
+                    {canManage && (
                       <button
                         onClick={() => setLlegoTodo({ supplier, list })}
                         className="flex items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1 text-[11px] font-semibold text-white active:scale-95"
                       >
-                        <Check className="size-3" /> Llegó todo
+                        <Check className="size-3" /> {list.length > 1 ? 'Llegó todo' : 'Llegó + agregar'}
                       </button>
                     )}
                   </div>
@@ -1189,6 +1199,7 @@ function PedidosContent() {
       {llegoTodo && (
         <LlegoTodoDialog
           supplier={llegoTodo.supplier}
+          suppliers={suppliers}
           orders={llegoTodo.list}
           stockItems={stockItems}
           matchByOrder={matchByOrder}

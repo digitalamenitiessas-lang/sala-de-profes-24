@@ -346,7 +346,7 @@ export async function POST(request: NextRequest) {
     // queda como gasto del proveedor (para Pagos) sin inventar costos.
     if (body.action === 'confirm_arrival_batch') {
       let gasto = parseDatosGasto(body.gasto)
-      const { items, paymentMethod, invoiceTotal, note } = body as {
+      const { items: itemsPedidos, extras, supplierId: proveedorElegido, paymentMethod, invoiceTotal, note } = body as {
         items: {
           orderId: number
           source: 'cocina' | 'barra'
@@ -359,17 +359,66 @@ export async function POST(request: NextRequest) {
           expiresAt?: string | null
           note?: string | null
         }[]
+        /** Lo que llegó y no estaba en el pedido ("+ Llegó algo más") o una compra sin pedido */
+        extras?: {
+          productName: string
+          receivedQty?: string | null
+          stockItemId?: string | null
+          totalCost?: number | null
+          expiresAt?: string | null
+          note?: string | null
+        }[]
+        /** Proveedor de la compra: obligatorio si no hay pedidos (compra sin pedido) */
+        supplierId?: string | null
         paymentMethod?: string | null
         invoiceTotal?: number | null
         note?: string | null
       }
+      const items = Array.isArray(itemsPedidos) ? [...itemsPedidos] : []
+      const agregados = (Array.isArray(extras) ? extras : []).filter((e) => typeof e?.productName === 'string' && e.productName.trim())
       const { data: profile } = await admin.from('profiles').select('role, first_name, last_name').eq('id', user.id).single()
       if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
         return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden confirmar recepciones' }, { status: 403 })
       }
       gasto = conCargadoPor(gasto, [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null)
-      if (!Array.isArray(items) || items.length === 0 || items.length > 60) {
+      if (items.length + agregados.length === 0 || items.length + agregados.length > 60) {
         return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
+      }
+      if (agregados.length > 0 && !paymentMethod) {
+        return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
+      }
+
+      // Lo que llegó sin estar en el pedido: se crea como pedido "en camino"
+      // de ese proveedor y se recibe junto con el resto (mismo pago, misma
+      // factura, mismo gasto en Fudo). Sin avisos: ya está acá.
+      if (agregados.length > 0) {
+        let proveedor = typeof proveedorElegido === 'string' && proveedorElegido ? proveedorElegido : null
+        if (!proveedor && items[0]) {
+          const { data: o } = await admin.from(items[0].source === 'barra' ? 'bar_orders' : 'kitchen_orders').select('supplier_id').eq('id', items[0].orderId).maybeSingle()
+          proveedor = (o as { supplier_id?: string | null } | null)?.supplier_id ?? null
+        }
+        if (!proveedor) return NextResponse.json({ success: false, error: 'Elegí el proveedor' }, { status: 400 })
+        const ahoraIso = new Date().toISOString()
+        for (const e of agregados) {
+          const { data: creado, error: insErr } = await admin.from('kitchen_orders').insert({
+            product_name: e.productName.trim().slice(0, 120),
+            quantity: (e.receivedQty ?? '').trim() || '1',
+            category: 'otros' as KitchenOrderCategoryValue,
+            urgency: 'normal' as KitchenOrderUrgencyValue,
+            note: 'Llegó sin estar en el pedido',
+            created_by: user.id,
+            stock_item_id: e.stockItemId ?? null,
+            supplier_id: proveedor,
+            status: 'ordered',
+            ordered_at: ahoraIso,
+          }).select('id').single()
+          if (insErr || !creado) throw insErr ?? new Error('No se pudo registrar lo que llegó de más')
+          items.push({
+            orderId: (creado as { id: number }).id, source: 'cocina', llego: true,
+            receivedQty: e.receivedQty ?? null, stockItemId: e.stockItemId ?? null,
+            totalCost: e.totalCost ?? null, expiresAt: e.expiresAt ?? null, note: e.note ?? null,
+          })
+        }
       }
       const llegan = items.filter((i) => i.llego)
       const noVienen = items.filter((i) => !i.llego && i.noVino === true)
@@ -541,7 +590,7 @@ export async function POST(request: NextRequest) {
         metadata: { resultados, invoiceTotal: factura, resto, paymentMethod, noVinieron: noVienen.map((i) => i.orderId), siguenEnCamino: items.filter((i) => !i.llego && i.noVino !== true).map((i) => i.orderId) },
       }).catch(() => {})
 
-      return NextResponse.json({ success: okCount > 0 || noVinoOk > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto, noVinieron: noVinoOk })
+      return NextResponse.json({ success: okCount > 0 || noVinoOk > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto, noVinieron: noVinoOk, agregados: agregados.length })
     }
 
     // ----- NO VINO: UN producto del pedido no llegó (cocina o barra) -----
