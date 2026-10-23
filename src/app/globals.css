@@ -113,6 +113,12 @@
   /* Light — Warm, cream-based, editorial                             */
   /* ================================================================ */
 
+  /* Color de la sucursal 24 y Maipú (barra de arriba, login, ícono y barra
+     del celular): distingue esta app de la de Santa Fe, que es verde.
+     Si se cambia, cambiar también themeColor (layout.tsx), manifest.json y
+     los íconos. */
+  --sucursal: #1f3a5f;
+
   /* Surfaces — warm cream, not cold white */
   --background: #faf8f5;
   --foreground: #2c2420;

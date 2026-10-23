@@ -192,11 +192,14 @@ export default function LoginPage() {
                 transition={{ delay: 0.25, duration: 0.4 }}
               >
                 <h1 className="font-display text-3xl tracking-tight text-[#3d2c24]">
-                  Sala de Profes
+                  Sala de Profes 24
                 </h1>
                 <p className="section-label mt-2">
                   La Vieja Escuela
                 </p>
+                <span className="mt-3 inline-block rounded-full bg-[var(--sucursal)] px-3 py-1 text-[12px] font-semibold tracking-wide text-white">
+                  24 y Maipú
+                </span>
               </motion.div>
             </div>
 

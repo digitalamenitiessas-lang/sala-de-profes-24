@@ -85,7 +85,7 @@ export function TopBar() {
   }
 
   return (
-    <header className={`sticky top-0 z-40 shrink-0 bg-[#006d5a] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
+    <header className={`sticky top-0 z-40 shrink-0 bg-[var(--sucursal)] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
       <div className={`flex items-center justify-between px-5 transition-all duration-200 ${scrolled ? 'h-[2.75rem]' : 'h-[3.75rem]'}`}>
         {/* Volver + Brand */}
         <div className="flex min-w-0 items-center gap-1.5">
@@ -108,10 +108,10 @@ export function TopBar() {
           />
           <div className="flex flex-col">
             <span className="font-display text-[15px] font-semibold leading-tight tracking-tight text-white">
-              {pageTitle || 'Sala de Profes'}
+              {pageTitle || 'Sala de Profes 24'}
             </span>
             <span className={`text-[9px] font-medium tracking-[0.12em] text-white/40 transition-all duration-200 ${scrolled || pageTitle ? 'h-0 overflow-hidden opacity-0' : 'opacity-100'}`}>
-              LA VIEJA ESCUELA
+              LA VIEJA ESCUELA · 24 Y MAIPÚ
             </span>
           </div>
         </Link>

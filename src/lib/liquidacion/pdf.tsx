@@ -117,7 +117,7 @@ function LiquidacionPDF({ liq, assets, generadoPor }: { liq: Liquidacion; assets
           <View>
             <Text style={s.titulo}>Liquidación de haberes</Text>
             <Text style={s.subtitulo}>{periodo}</Text>
-            <Text style={s.generado}>Generado el {generado}{generadoPor ? ` por ${generadoPor}` : ''} · Sala de Profes</Text>
+            <Text style={s.generado}>Generado el {generado}{generadoPor ? ` por ${generadoPor}` : ''} · Sala de Profes 24</Text>
           </View>
         </View>
 

@@ -1,5 +1,5 @@
 // Service Worker — Sala de Profes PWA
-const CACHE_NAME = 'sala-de-profes-v3';
+const CACHE_NAME = 'sala-de-profes-v4';
 const OFFLINE_URL = '/offline.html';
 
 // App shell files to pre-cache during install.
@@ -149,7 +149,7 @@ self.addEventListener('push', (event) => {
     };
 
     event.waitUntil(
-      self.registration.showNotification(data.title || 'Sala de Profes', options)
+      self.registration.showNotification(data.title || 'Sala de Profes 24', options)
     );
   } catch {
     // Invalid push data

@@ -121,7 +121,7 @@ export function InstallPrompt() {
           </div>
           <div className="flex-1">
             <h3 className="text-base font-semibold text-white">
-              Instalar Sala de Profes
+              Instalar Sala de Profes 24
             </h3>
             <p className="text-xs text-white/80">Acceso rápido desde tu pantalla</p>
           </div>

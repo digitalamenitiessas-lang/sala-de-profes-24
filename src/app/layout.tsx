@@ -4,13 +4,13 @@ import { RegisterSW } from '@/components/pwa/register-sw'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Sala de Profes — La Vieja Escuela',
-  description: 'Gestión interna de La Vieja Escuela',
+  title: 'Sala de Profes 24 — La Vieja Escuela',
+  description: 'Gestión interna de La Vieja Escuela — 24 y Maipú',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'Sala de Profes',
+    title: 'Profes 24',
   },
 }
 
@@ -18,7 +18,8 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#006d5a',
+  // Color de la sucursal (--sucursal en globals.css)
+  themeColor: '#1f3a5f',
 }
 
 export default function RootLayout({
