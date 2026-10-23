@@ -7,7 +7,9 @@ import { ROLES_ENCARGADO_TURNO, turnoEnCurso, turnosDelDia } from '@/lib/turnos/
 // Protocolos con horario (limpieza del baño, etc.)
 // ---------------------------------------------------------------------------
 // Ciclo de cada tarea (un horario de un día):
-//   hora         → aviso al encargado de turno: "asigná a alguien"
+//   hora         → si el protocolo tiene puesto automático (tolva → barista) y
+//                  hay alguien fichado con ese puesto, se le asigna sola;
+//                  si no, aviso al encargado de turno: "asigná a alguien"
 //   hora + 15'   → si sigue sin asignar, se vuelve a avisar
 //   asignada+30' → si no está hecha, recordatorio a quien la tiene (y a quien asignó)
 //   hora + 60'   → si no está hecha, aviso de atraso a encargados y socios
@@ -28,6 +30,8 @@ export type Protocolo = {
   dias?: number[] | null
   /** La tarea no sale por horario: aparece cuando se termina una producción (conteo de elaborados) */
   al_terminar_produccion?: boolean | null
+  /** A su hora se asigna sola a quien esté fichado con este puesto (ej. tolva → barista). null = la asigna el encargado */
+  asignar_auto_rol?: string | null
 }
 
 export const NOMBRE_DIA = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
@@ -165,19 +169,48 @@ async function avisar(ids: string[], payload: { title: string; body: string; url
 export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()): Promise<Record<string, number>> {
   const fecha = fechaOperativa(ahora)
   await asegurarTareasDelDia(admin, fecha)
-  const [{ data: tareas }, { data: protocolos }] = await Promise.all([
-    admin.from('protocolo_tareas').select('*').eq('fecha', fecha).neq('estado', 'hecha'),
-    admin.from('protocolos').select('id, nombre'),
+  const [{ data: tareasDelDia }, { data: protocolos }] = await Promise.all([
+    admin.from('protocolo_tareas').select('*').eq('fecha', fecha),
+    // select('*'): tolera que todavía no exista la columna asignar_auto_rol
+    admin.from('protocolos').select('*'),
   ])
-  const nombre = new Map((protocolos ?? []).map((p: { id: string; nombre: string }) => [p.id, p.nombre]))
-  const cont = { aviso: 0, reaviso: 0, recordatorio: 0, atraso: 0 }
+  const delDia = (tareasDelDia ?? []) as Tarea[]
+  const tareas = delDia.filter((t) => t.estado !== 'hecha')
+  const prot = new Map(((protocolos ?? []) as Protocolo[]).map((p) => [p.id, p]))
+  const cont = { auto: 0, aviso: 0, reaviso: 0, recordatorio: 0, atraso: 0 }
   let encargados: string[] | null = null
   const getEncargados = async () => (encargados ??= await encargadosDeTurno(admin, fecha))
+  let personal: Persona[] | null = null
   const url = '/protocolos'
   const t0 = ahora.getTime()
 
-  for (const t of (tareas ?? []) as Tarea[]) {
-    const n = nombre.get(t.protocolo_id) ?? 'Protocolo'
+  /**
+   * Tarea con puesto automático: se la asigna a quien esté FICHADO con ese
+   * puesto y turno a esa hora (no a quien todavía no llegó). Si hay varios, a
+   * quien le tocaron menos de este protocolo hoy. false = no había nadie.
+   */
+  const asignarSola = async (t: Tarea, p: Protocolo | undefined): Promise<boolean> => {
+    if (!p?.asignar_auto_rol) return false
+    personal ??= await personalDeTurno(admin, fecha, ahora)
+    const yaLeTocaron = (id: string) => delDia.filter((x) => x.protocolo_id === t.protocolo_id && x.asignado_a === id).length
+    const elegido = candidatosPara(personal, t, ahora, [p.asignar_auto_rol])
+      .filter((c) => c.presente)
+      .sort((a, b) => yaLeTocaron(a.id) - yaLeTocaron(b.id) || a.nombre.localeCompare(b.nombre, 'es'))[0]
+    if (!elegido) return false
+    // Solo si sigue sin asignar (el encargado pudo haberla asignado recién)
+    const { data } = await admin.from('protocolo_tareas').update({
+      estado: 'asignada', asignado_a: elegido.id, asignado_por: null, asignado_at: ahora.toISOString(), recordatorio_at: null,
+      avisado_at: t.avisado_at ?? ahora.toISOString(),
+    }).eq('id', t.id).eq('estado', 'pendiente').select('id')
+    if ((data ?? []).length === 0) return true
+    t.asignado_a = elegido.id
+    await avisar([elegido.id], { title: `🧽 Te toca: ${p.nombre} (${t.hora})`, body: `Te tocó por estar de ${p.asignar_auto_rol} en turno. Al terminar, marcá los pasos y subí las fotos.`, url })
+    cont.auto++
+    return true
+  }
+
+  for (const t of tareas) {
+    const n = prot.get(t.protocolo_id)?.nombre ?? 'Protocolo'
     const inicio = instanteDe(t.fecha, t.hora).getTime()
     // Creada después de su límite (arranque del sistema o horario agregado a
     // mitad del día): no se avisa un atraso que nadie pudo cumplir.
@@ -203,6 +236,8 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
     if (t0 < inicio) continue
 
     if (t.estado === 'pendiente') {
+      // Puesto automático: se reintenta en cada vuelta (el barista pudo fichar después)
+      if (await asignarSola(t, prot.get(t.protocolo_id))) continue
       if (!t.avisado_at) {
         if (await reservar('avisado_at')) {
           await avisar(await getEncargados(), { title: `🧽 Es la hora: ${n} (${t.hora})`, body: 'Asigná a alguien del turno (o a vos) para hacerla y subir las fotos.', url })

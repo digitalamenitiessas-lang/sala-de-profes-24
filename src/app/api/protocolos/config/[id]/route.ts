@@ -5,7 +5,7 @@ import { logAudit } from '@/lib/audit'
 import { fechaOperativa } from '@/lib/attendance/jornada'
 import { saleElDia, type Protocolo } from '@/lib/protocolos/protocolos'
 
-// PUT /api/protocolos/config/[id] { horarios?, dias?, pasos?, fotos?, activo? } — encargado/socio.
+// PUT /api/protocolos/config/[id] { horarios?, dias?, pasos?, fotos?, activo?, asignar_auto_rol? } — encargado/socio.
 // dias: 0 = domingo … 6 = sábado; vacío (o los 7) = todos los días.
 // Los horarios nuevos aplican desde hoy: se crean las tareas que falten y se
 // borran las de horarios quitados que todavía no se asignaron ni hicieron.
@@ -13,6 +13,8 @@ export const dynamic = 'force-dynamic'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const HORA = /^([01]\d|2[0-3]):[0-5]\d$/
+/** Puestos a los que una tarea se puede asignar sola */
+const PUESTOS_AUTO = ['barista', 'runner', 'cocina', 'chef', 'bacha']
 
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -20,7 +22,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     if (auth.response) return auth.response
     const { id } = await params
     if (!UUID.test(id)) return NextResponse.json({ error: 'Protocolo inválido' }, { status: 400 })
-    const body = await request.json().catch(() => null) as { horarios?: string[]; dias?: number[] | null; pasos?: string[]; fotos?: string[]; activo?: boolean } | null
+    const body = await request.json().catch(() => null) as { horarios?: string[]; dias?: number[] | null; pasos?: string[]; fotos?: string[]; activo?: boolean; asignar_auto_rol?: string | null } | null
     if (!body) return NextResponse.json({ error: 'Pedido inválido' }, { status: 400 })
 
     const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() }
@@ -49,6 +51,10 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       cambios.fotos = f
     }
     if (body.activo !== undefined) cambios.activo = Boolean(body.activo)
+    if (body.asignar_auto_rol !== undefined) {
+      if (body.asignar_auto_rol !== null && !PUESTOS_AUTO.includes(body.asignar_auto_rol)) return NextResponse.json({ error: 'Puesto inválido' }, { status: 400 })
+      cambios.asignar_auto_rol = body.asignar_auto_rol
+    }
 
     const { data: prot, error } = await admin.from('protocolos').update(cambios).eq('id', id).select('*').maybeSingle()
     if (error) throw error

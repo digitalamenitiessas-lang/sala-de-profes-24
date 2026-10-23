@@ -22,6 +22,8 @@ type Visible = 'programada' | 'sin_asignar' | 'asignada' | 'atrasada' | 'hecha' 
 type TareaUI = {
   id: string; fecha: string; hora: string; estado: 'pendiente' | 'asignada' | 'hecha'; visible: Visible
   asignado_a: string | null; asignado_nombre: string | null; hecho_nombre: string | null
+  /** null con asignado_a = se asignó sola (puesto automático) */
+  asignado_por?: string | null
   hecho_at: string | null; foto_url: string | null; fotos_urls?: string[]; nota: string | null
   candidatos: Candidato[]
   medicion?: number | null
@@ -35,6 +37,8 @@ type ProtocoloUI = {
   /** Sale al terminar una producción, no por horario */
   al_terminar_produccion?: boolean | null
   medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null; roles?: string[] | null
+  /** A su hora se asigna sola a quien esté fichado con este puesto */
+  asignar_auto_rol?: string | null
   /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
   enlace_url?: string | null; enlace_texto?: string | null
   tareas: TareaUI[]
@@ -185,7 +189,7 @@ function Protocolo({ p, yo, onAsignar, onCompletar, onConfigurar, onFoto }: {
                   <p className="mt-1 truncate text-[12.5px] text-[#5c4a42]">
                     {hecha
                       ? <>{t.hecho_nombre ?? 'Alguien'} · {t.hecho_at ? hhmm(t.hecho_at) : ''}{t.medicion != null && <> · <b>{Number(t.medicion).toLocaleString('es-AR')} {p.medicion_unidad ?? ''}</b></>}</>
-                      : t.asignado_nombre ? <>Le toca a <b>{mia ? 'vos' : t.asignado_nombre}</b></> : t.visible === 'programada' ? 'Todavía no es la hora' : 'Nadie asignado'}
+                      : t.asignado_nombre ? <>Le toca a <b>{mia ? 'vos' : t.asignado_nombre}</b>{!t.asignado_por && ' · automático'}</> : t.visible === 'programada' ? 'Todavía no es la hora' : 'Nadie asignado'}
                   </p>
                   {hecha && t.nota && <p className="mt-0.5 text-[11.5px] italic text-[#7d6c64]">“{t.nota}”</p>}
                 </div>
@@ -454,6 +458,7 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
   const [fotosCfg, setFotosCfg] = useState<string[]>(p.fotos?.length ? p.fotos : ['Foto general'])
   const [nuevaFoto, setNuevaFoto] = useState('')
   const [activo, setActivo] = useState(p.activo)
+  const [autoRol, setAutoRol] = useState(p.asignar_auto_rol ?? '')
   const [nuevaHora, setNuevaHora] = useState('')
   const [nuevoPaso, setNuevoPaso] = useState('')
   const [guardando, setGuardando] = useState(false)
@@ -461,7 +466,11 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
   async function guardar() {
     setGuardando(true)
     try {
-      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ horarios, dias, pasos, fotos: fotosCfg, activo }) })
+      const r = await fetch(`/api/protocolos/config/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        horarios, dias, pasos, fotos: fotosCfg, activo,
+        // Solo si cambió: así se puede guardar aunque la base todavía no tenga la columna
+        ...(autoRol !== (p.asignar_auto_rol ?? '') ? { asignar_auto_rol: autoRol || null } : {}),
+      }) })
       const j = await r.json().catch(() => null)
       if (!r.ok) throw new Error(j?.error ?? 'No se pudo guardar')
       toast.success('Protocolo actualizado')
@@ -491,7 +500,16 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
             <input type="time" value={nuevaHora} onChange={(e) => setNuevaHora(e.target.value)} className="flex-1 rounded-lg border border-[#ebe6df] px-2 py-1.5 text-[13px]" />
             <button disabled={!nuevaHora || horarios.includes(nuevaHora)} onClick={() => { setHorarios((x) => [...x, nuevaHora].sort()); setNuevaHora('') }} className="flex items-center gap-1 rounded-lg bg-[#3d2c24] px-3 text-[12.5px] font-semibold text-white disabled:opacity-40"><Plus className="size-3.5" /> Agregar</button>
           </div>
-          <p className="mt-1 text-[11.5px] text-[#7d6c64]">A cada horario le llega el aviso al encargado de turno. Cambia desde hoy.</p>
+          <p className="mt-1 text-[11.5px] text-[#7d6c64]">{autoRol ? `A cada horario se asigna sola a quien esté fichado de ${autoRol}; si no hay nadie, le llega el aviso al encargado de turno.` : 'A cada horario le llega el aviso al encargado de turno.'} Cambia desde hoy.</p>
+        </div>
+
+        <div>
+          <p className="mb-1.5 text-[12.5px] font-semibold text-[#3d2c24]">¿Quién la hace?</p>
+          <select value={autoRol} onChange={(e) => setAutoRol(e.target.value)} className="w-full rounded-lg border border-[#ebe6df] bg-white px-2.5 py-2 text-[13px]">
+            <option value="">La asigna el encargado</option>
+            {PUESTOS_AUTO.map((r) => <option key={r} value={r}>Sola: a quien esté de {r}</option>)}
+          </select>
+          <p className="mt-1 text-[11.5px] text-[#7d6c64]">Si hay varios fichados, rota entre ellos. El encargado la puede cambiar igual.</p>
         </div>
 
         {!p.al_terminar_produccion && (
@@ -563,6 +581,8 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
     </Dialog>
   )
 }
+
+const PUESTOS_AUTO = ['barista', 'runner', 'cocina', 'chef', 'bacha']
 
 const NOMBRE_DIA_CORTO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
 /** "Lun y Jue · 08:30", "Al terminar cada producción", "08:00 · 16:00 · 22:00" */
