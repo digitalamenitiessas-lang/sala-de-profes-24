@@ -3,7 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
 import { logAudit } from '@/lib/audit'
 import { fechaOperativa } from '@/lib/attendance/jornada'
-import { saleElDia, type Protocolo } from '@/lib/protocolos/protocolos'
+import { horariosDelDia, leerInicioPorDia, saleElDia, type Protocolo } from '@/lib/protocolos/protocolos'
 
 // PUT /api/protocolos/config/[id] { horarios?, dias?, pasos?, fotos?, activo?, asignar_auto_rol? } — encargado/socio.
 // dias: 0 = domingo … 6 = sábado; vacío (o los 7) = todos los días.
@@ -64,10 +64,12 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     const hoy = fechaOperativa()
     // Si hoy no es uno de sus días, no se crean tareas de hoy
     const hoySale = saleElDia(prot as Protocolo, hoy)
-    if (prot.activo && hoySale && (prot.horarios as string[]).length > 0) {
-      await admin.from('protocolo_tareas').upsert((prot.horarios as string[]).map((hora) => ({ protocolo_id: id, fecha: hoy, hora })), { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
+    // Con la hora de arranque de hoy (ej. sábados desde 08:45)
+    const horariosHoy = horariosDelDia(prot.horarios as string[], hoy, await leerInicioPorDia(admin))
+    if (prot.activo && hoySale && horariosHoy.length > 0) {
+      await admin.from('protocolo_tareas').upsert(horariosHoy.map((hora) => ({ protocolo_id: id, fecha: hoy, hora })), { onConflict: 'protocolo_id,fecha,hora', ignoreDuplicates: true })
     }
-    const sobran = prot.activo && hoySale ? (prot.horarios as string[]) : []
+    const sobran = prot.activo && hoySale ? horariosHoy : []
     let borrar = admin.from('protocolo_tareas').delete().eq('protocolo_id', id).gte('fecha', hoy).eq('estado', 'pendiente')
     if (sobran.length > 0) borrar = borrar.not('hora', 'in', `(${sobran.map((h) => `"${h}"`).join(',')})`)
     // Los de "al terminar producción" no tienen horarios fijos: sus tareas no se borran acá

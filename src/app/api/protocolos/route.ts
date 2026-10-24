@@ -4,7 +4,7 @@ import { requireRole } from '@/lib/supabase/require-role'
 import { isManagerOrAbove } from '@/lib/roles'
 import { esEncargadoAhora } from '@/lib/turnos/rol-del-turno'
 import { fechaOperativa } from '@/lib/attendance/jornada'
-import { asegurarTareasDelDia, candidatosPara, estadoVisible, sePuedeCerrar, personalDeTurno, type Protocolo, type Tarea } from '@/lib/protocolos/protocolos'
+import { asegurarTareasDelDia, candidatosPara, estadoVisible, leerInicioPorDia, sePuedeCerrar, personalDeTurno, type Protocolo, type Tarea } from '@/lib/protocolos/protocolos'
 
 // GET /api/protocolos — protocolos de hoy con sus tareas, el cumplimiento de
 // los últimos 7 días y, en cada tarea de hoy, quiénes pueden hacerla: solo los
@@ -21,12 +21,13 @@ export async function GET() {
   await asegurarTareasDelDia(admin, hoy)
   const desde = new Date(Date.parse(`${hoy}T12:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10)
 
-  const [{ data: protocolos }, { data: tareas }, personal, { data: perfiles }, encargado] = await Promise.all([
+  const [{ data: protocolos }, { data: tareas }, personal, { data: perfiles }, encargado, inicioPorDia] = await Promise.all([
     admin.from('protocolos').select('*').order('nombre'),
     admin.from('protocolo_tareas').select('*').gte('fecha', desde).lte('fecha', hoy).order('hora'),
     personalDeTurno(admin, hoy),
     admin.from('profiles').select('id, first_name, last_name'),
     esEncargadoAhora(admin, auth.user),
+    leerInicioPorDia(admin),
   ])
   type Perfil = { id: string; first_name: string | null; last_name: string | null }
   const nombre = new Map(((perfiles ?? []) as Perfil[]).map((p) => [p.id, [p.first_name, p.last_name].filter(Boolean).join(' ')]))
@@ -63,6 +64,7 @@ export async function GET() {
   return NextResponse.json({
     hoy,
     protocolos: lista,
+    inicio_por_dia: inicioPorDia,
     yo: { id: auth.user.id, puede_asignar: encargado, puede_configurar: isManagerOrAbove(auth.user.role) },
   })
 }

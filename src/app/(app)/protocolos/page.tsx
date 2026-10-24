@@ -46,7 +46,11 @@ type ProtocoloUI = {
 }
 /** Quien está en turno a la hora de la tarea, con el rol de ese turno */
 type Candidato = { id: string; nombre: string; role: string; presente: boolean; turno: string | null }
-type Datos = { hoy: string; protocolos: ProtocoloUI[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean } }
+type Datos = {
+  hoy: string; protocolos: ProtocoloUI[]; yo: { id: string; puede_asignar: boolean; puede_configurar: boolean }
+  /** Hora de arranque por día de la semana (0 = domingo), ej. { "6": "08:45" } */
+  inicio_por_dia?: Record<string, string>
+}
 
 const fetcher = async (url: string) => {
   const r = await fetch(url)
@@ -90,6 +94,7 @@ export default function ProtocolosPage() {
   const [completando, setCompletando] = useState<{ p: ProtocoloUI; t: TareaUI } | null>(null)
   const [configurando, setConfigurando] = useState<ProtocoloUI | null>(null)
   const [fotos, setFotos] = useState<string[] | null>(null)
+  const [editandoInicio, setEditandoInicio] = useState(false)
 
   if (isLoading && !data) return <div className="flex justify-center py-20"><Loader2 className="size-6 animate-spin text-[#a39e97]" /></div>
   if (error || !data) return <p className="py-20 text-center text-sm text-[#ea504c]">{error?.message ?? 'No se pudo cargar'}</p>
@@ -100,6 +105,18 @@ export default function ProtocolosPage() {
         <h1 className="font-display text-3xl font-bold leading-[1.05] tracking-tight text-[#3d2c24]">Protocolos</h1>
         <p className="section-label mt-1.5">Se asignan, se hacen y se registran con fotos</p>
       </div>
+
+      {(textoInicio(data.inicio_por_dia) || data.yo.puede_configurar) && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl bg-white px-4 py-3 text-[12.5px] text-[#5c4a42] ring-1 ring-[#ebe6df]">
+          <span className="flex items-center gap-2">
+            <Clock className="size-4 shrink-0 text-[#a39e97]" />
+            {textoInicio(data.inicio_por_dia) ?? 'Todos los días arrancan con sus horarios de siempre.'}
+          </span>
+          {data.yo.puede_configurar && (
+            <button onClick={() => setEditandoInicio(true)} className="shrink-0 font-semibold text-[#006d5a]">Hora de arranque</button>
+          )}
+        </div>
+      )}
 
       {data.protocolos.filter((p) => p.activo || data.yo.puede_configurar).map((p) => (
         <Protocolo
@@ -129,6 +146,9 @@ export default function ProtocolosPage() {
           onClose={() => setCompletando(null)}
           onDone={() => { setCompletando(null); void mutate() }}
         />
+      )}
+      {editandoInicio && (
+        <InicioDialog inicio={data.inicio_por_dia ?? {}} onClose={() => setEditandoInicio(false)} onDone={() => { setEditandoInicio(false); void mutate() }} />
       )}
       {configurando && (
         <ConfigDialog p={configurando} onClose={() => setConfigurando(null)} onDone={() => { setConfigurando(null); void mutate() }} />
@@ -585,6 +605,65 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
 const PUESTOS_AUTO = ['barista', 'runner', 'cocina', 'chef', 'bacha']
 
 const NOMBRE_DIA_CORTO = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+const DIA_PLURAL = ['Domingos', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábados']
+
+/** "Sábados desde las 08:45: lo que esté antes arranca a esa hora." (null si no hay ninguno) */
+function textoInicio(inicio?: Record<string, string>): string | null {
+  const dias = [1, 2, 3, 4, 5, 6, 0].filter((d) => inicio?.[String(d)])
+  if (dias.length === 0) return null
+  return `${dias.map((d) => `${DIA_PLURAL[d]} desde las ${inicio![String(d)]}`).join(' · ')}: lo que esté antes arranca a esa hora.`
+}
+
+/** Hora de arranque de todos los protocolos por día (ej. sábados el local abre 08:45). */
+function InicioDialog({ inicio, onClose, onDone }: { inicio: Record<string, string>; onClose: () => void; onDone: () => void }) {
+  const [valores, setValores] = useState<Record<string, string>>({ ...inicio })
+  const [guardando, setGuardando] = useState(false)
+
+  async function guardar() {
+    setGuardando(true)
+    try {
+      const inicioPorDia = Object.fromEntries(Object.entries(valores).filter(([, h]) => h))
+      const r = await fetch('/api/protocolos/inicio', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inicio_por_dia: inicioPorDia }) })
+      const j = await r.json().catch(() => null)
+      if (!r.ok) throw new Error(j?.error ?? 'No se pudo guardar')
+      toast.success('Hora de arranque guardada')
+      onDone()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'No se pudo guardar')
+      setGuardando(false)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !guardando) onClose() }}>
+      <DialogContent className="max-h-[90svh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Hora de arranque por día</DialogTitle></DialogHeader>
+        <p className="text-[12px] text-[#7d6c64]">
+          Para los días que el local abre más tarde: ese día, los controles que estén antes de esta hora arrancan a esta hora. Vacío = sus horarios de siempre. Vale para todos los protocolos y rige desde el próximo día (las tareas de hoy ya están armadas).
+        </p>
+        <ul className="space-y-1.5">
+          {[1, 2, 3, 4, 5, 6, 0].map((d) => {
+            const k = String(d)
+            return (
+              <li key={d} className="flex items-center gap-3">
+                <span className="w-24 shrink-0 text-[13px] font-semibold text-[#3d2c24]">{DIA_PLURAL[d]}</span>
+                <input type="time" min="06:00" value={valores[k] ?? ''} onChange={(e) => setValores((v) => ({ ...v, [k]: e.target.value }))} className="min-w-0 flex-1 rounded-lg border border-[#ebe6df] px-2 py-1.5 text-[13px]" />
+                {valores[k] && (
+                  <button onClick={() => setValores((v) => ({ ...v, [k]: '' }))} className="rounded-full p-1 hover:bg-[#f3efe9]" aria-label={`Sacar ${DIA_PLURAL[d]}`}><X className="size-4 text-[#a39e97]" /></button>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+        <DialogFooter>
+          <button onClick={() => void guardar()} disabled={guardando} className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3d2c24] py-3 text-[14px] font-bold text-white disabled:opacity-40">
+            {guardando && <Loader2 className="size-4 animate-spin" />} Guardar
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 /** "Lun y Jue · 08:30", "Al terminar cada producción", "08:00 · 16:00 · 22:00" */
 function cuandoSale(p: { horarios: string[]; dias?: number[] | null; al_terminar_produccion?: boolean | null }): string {
   const partes: string[] = []
