@@ -85,7 +85,10 @@ export function TopBar() {
   }
 
   return (
-    <header className={`sticky top-0 z-40 shrink-0 bg-[var(--sucursal)] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
+    // pt safe-area: en el iPhone con la app instalada la página ocupa también la
+    // franja de la hora y la batería (black-translucent); sin este margen la barra
+    // quedaba debajo y no se podía tocar el usuario. El azul se ve detrás de la hora.
+    <header className={`sticky top-0 z-40 shrink-0 bg-[var(--sucursal)] pt-[env(safe-area-inset-top)] transition-all duration-200 ${scrolled ? 'shadow-md' : ''}`}>
       <div className={`flex items-center justify-between px-5 transition-all duration-200 ${scrolled ? 'h-[2.75rem]' : 'h-[3.75rem]'}`}>
         {/* Volver + Brand */}
         <div className="flex min-w-0 items-center gap-1.5">

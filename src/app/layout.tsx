@@ -36,6 +36,9 @@ export default function RootLayout({
         {children}
         <Toaster
           position="top-center"
+          // Debajo de la hora y la batería del iPhone (app instalada)
+          offset={{ top: 'calc(env(safe-area-inset-top) + 24px)' }}
+          mobileOffset={{ top: 'calc(env(safe-area-inset-top) + 16px)' }}
           toastOptions={{
             style: {
               borderRadius: '0.875rem',
