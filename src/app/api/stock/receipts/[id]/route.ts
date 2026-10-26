@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
+import { NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -308,8 +309,21 @@ export async function DELETE(
     const { error: delErr } = await admin.from('stock_receipts').delete().eq('id', receiptId)
     if (delErr) throw delErr
 
+    // 3b) Si de esa factura quedó solo el recibo de impuestos (IVA/IIBB), se va
+    // con ella: no queda deuda ni pago de una factura que ya no está
+    let impuestosBorrados = 0
+    if (receipt.fudo_expense_id && !(receipt.note ?? '').startsWith(NOTA_IMPUESTOS)) {
+      const { data: restantes } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', receipt.fudo_expense_id)
+      const filas = (restantes ?? []) as { id: number; note: string | null }[]
+      if (filas.length > 0 && filas.every((r) => (r.note ?? '').startsWith(NOTA_IMPUESTOS))) {
+        const { error: impErr } = await admin.from('stock_receipts').delete().in('id', filas.map((r) => r.id))
+        if (impErr) console.warn('[DELETE receipt] recibo de impuestos no borrado:', impErr.message)
+        else impuestosBorrados = filas.length
+      }
+    }
+
     const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
-    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}`, metadata: { receiptId, qty: receipt.qty, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed } }).catch(() => {})
+    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}${impuestosBorrados ? ' y su recibo de impuestos' : ''}`, metadata: { receiptId, qty: receipt.qty, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed, impuestosBorrados } }).catch(() => {})
 
     return NextResponse.json({ success: true, stockReversed, fudoReversed })
   } catch (error) {

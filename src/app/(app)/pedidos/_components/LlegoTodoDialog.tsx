@@ -109,6 +109,8 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
   const faltaCantidad = [...llegan, ...extrasOk].some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
   // Categoría del gasto: obligatoria cuando la compra tiene monto
   const datosGasto = useDatosGasto(supplier?.id)
+  // Misma factura que una carga anterior de hoy: el total ya está en ese gasto
+  const facturaYaCargada = !!datosGasto.campos.numeroAnterior && datosGasto.campos.numero.trim() === datosGasto.campos.numeroAnterior
   const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
   // Si nada llegó pero hay productos que no vinieron, se puede cerrar sin medio de pago
   const puede = !enviando && (cuantosLlegan > 0
@@ -126,7 +128,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
         body: JSON.stringify({
           action: 'confirm_arrival_batch',
           paymentMethod,
-          invoiceTotal: Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
+          invoiceTotal: !facturaYaCargada && Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
           note: nota.trim() || null,
           gasto: datosGasto.datos,
           supplierId: supplier?.id ?? null,
@@ -420,9 +422,14 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
           <div className="space-y-2 rounded-xl bg-[#faf8f5] p-3">
             <label className="block">
               <span className="text-[11px] font-semibold text-[#3d2c24]">Total de la factura <span className="font-normal text-[#a39e97]">(opcional)</span></span>
+              {facturaYaCargada && (
+                <span className="mt-1 block rounded-lg bg-[#fdf6ec] px-2.5 py-1.5 text-[11px] text-[#8b5e34]">
+                  Esta factura ya se cargó hoy: <b>no pongas el total otra vez</b>. Estos productos se suman al mismo gasto en Fudo.
+                </span>
+              )}
               <div className="relative mt-1">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
-                <input inputMode="decimal" value={factura} onChange={(e) => setFactura(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
+                <input inputMode="decimal" value={facturaYaCargada ? '' : factura} disabled={facturaYaCargada} onChange={(e) => setFactura(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none disabled:bg-[#f3efe9]" />
               </div>
               <span className="mt-1 block text-[10px] text-[#a39e97]">
                 {sumaProductos > 0 ? `Cargado por producto: ${money(sumaProductos)}. ` : ''}

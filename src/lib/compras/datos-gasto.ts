@@ -2,10 +2,16 @@
 // Datos del gasto que se cargan al confirmar una compra ("Llegó" / "Llegó
 // todo"): la categoría (con eso se hace el análisis de fin de mes) y el
 // comprobante. Va a Fudo (categoría, tipo y número de comprobante) y queda en
-// stock_receipts. IVA e IIBB solo quedan en Sala de Profes: la API de Fudo no
-// permite cargar impuestos en un gasto, se vuelven a cargar en Fudo a mano.
-// Sin imports de servidor: lo usan los diálogos y la API.
+// stock_receipts. IVA e IIBB (Factura A) se suman al gasto de Fudo para que
+// quede el total a pagar, detallados en la descripción (la API de Fudo no deja
+// cargarlos como impuestos del gasto), y quedan en un recibo "Impuestos de la
+// factura": la suma de los recibos de una factura = el gasto de Fudo. El costo
+// de los productos queda sin IVA. Sin imports de servidor: lo usan los
+// diálogos y la API.
 // ---------------------------------------------------------------------------
+
+/** Nota del recibo con el IVA/IIBB de una factura (sin producto: no es costo de insumos) */
+export const NOTA_IMPUESTOS = 'Impuestos de la factura'
 
 export type ComprobanteTipo = 'sin_comprobante' | 'ticket' | 'factura_a' | 'factura_b' | 'factura_c'
 

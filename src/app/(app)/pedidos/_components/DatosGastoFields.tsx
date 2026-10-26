@@ -9,8 +9,8 @@ import { parseQty } from './shared'
 // ---------------------------------------------------------------------------
 // "Datos del gasto" en Llegó / Llegó todo: categoría (obligatoria: con eso se
 // hace el análisis de fin de mes) y comprobante. Categoría, tipo y número van
-// a Fudo; IVA e IIBB (Factura A) quedan en Sala de Profes y se vuelven a
-// cargar en Fudo, porque Fudo no deja recibirlos por la API.
+// a Fudo; IVA e IIBB (Factura A) se suman al gasto de Fudo (total a pagar) y
+// quedan en un recibo "Impuestos de la factura" (ver lib/compras/datos-gasto).
 // ---------------------------------------------------------------------------
 
 export function useDatosGasto(supplierId: string | null | undefined) {
@@ -153,7 +153,7 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
               </label>
             ))}
           </div>
-          <p className="text-[10.5px] text-[#a39e97]">IVA e IIBB quedan en Sala de Profes. En Fudo hay que volver a cargarlos (Fudo no deja recibirlos desde otra app).</p>
+          <p className="text-[10.5px] text-[#a39e97]">Se suman al gasto de Fudo para que quede el total a pagar (detallados en la descripción). El costo de los productos queda sin IVA. Si ponés el total de la factura, ya los incluye.</p>
         </>
       )}
     </div>

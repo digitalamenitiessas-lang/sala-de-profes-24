@@ -8,7 +8,7 @@ import { normalizeToStockUnit, parseTypedUnit } from '@/lib/produccion/units'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
 import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
-import { conCargadoPor, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
+import { conCargadoPor, NOTA_IMPUESTOS, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 import { fraccionADecimal } from '@/lib/compras/lista-pegada'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
@@ -446,6 +446,48 @@ export async function POST(request: NextRequest) {
       const receiptIds: number[] = []
       let supplierId: string | null = null
       let cargadoPorProducto = 0
+
+      // UN SOLO gasto en Fudo para la compra, creado al primer producto que lo
+      // necesita: así cada producto entra como renglón del gasto (detalle de
+      // mercadería) ANTES de sumar su stock, y Fudo no lo suma dos veces.
+      // Monto: la factura si vino; si no, la suma de lo cargado por producto
+      // (se ajusta al final con lo que realmente entró).
+      const facturaLote = typeof invoiceTotal === 'number' && invoiceTotal > 0 ? invoiceTotal : null
+      const sumaPrevista = Math.round(llegan.reduce((a, i) => a + (typeof i.totalCost === 'number' && i.totalCost > 0 ? i.totalCost : 0), 0) * 100) / 100
+      let gastoLote: { id: string; amount: number } | null = null
+      let gastoLoteIntentado = false
+      const fudoDateLote = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+      // ¿Esta factura ya se cargó antes? (mismo proveedor + número + forma de
+      // pago: otro "Llegó todo" o "Llegó"). Alem 500 22/10: una factura en dos
+      // "Llegó todo", cada uno con el total → dos gastos y el arqueo doble.
+      // Si ya existe, los productos van a ESE gasto y el total no se repite.
+      const primeroLote = llegan[0]
+      const { data: ordenPrimera } = await admin.from(primeroLote.source === 'barra' ? 'bar_orders' : 'kitchen_orders').select('supplier_id').eq('id', primeroLote.orderId).maybeSingle()
+      const proveedorLote = (ordenPrimera as { supplier_id?: string | null } | null)?.supplier_id
+        ?? (typeof proveedorElegido === 'string' && proveedorElegido ? proveedorElegido : null)
+      const facturaPrevia = await buscarFacturaPrevia(admin, proveedorLote, gasto?.numero ?? null, paymentMethod ?? null)
+      if (facturaPrevia && gasto) gasto = { ...gasto, iva: null, iibb: null } // IVA/IIBB ya están en la primera carga
+      // Factura A SIN "total de la factura": el IVA/IIBB se suma al gasto para
+      // que quede el total a pagar (con el total, ya viene adentro del resto)
+      const impuestosLote = !facturaLote && !facturaPrevia ? impuestosDe(gasto) : 0
+      const montoPrevisto = facturaLote ?? (sumaPrevista > 0 ? Math.round((sumaPrevista + impuestosLote) * 100) / 100 : null)
+
+      const obtenerGastoLote = async () => {
+        if (facturaPrevia) return { id: facturaPrevia.expenseId, amount: 0 }
+        if (gastoLote || gastoLoteIntentado || !montoPrevisto) return gastoLote
+        gastoLoteIntentado = true
+        const prov = proveedorLote
+        if (!prov) return null
+        const { data: sup } = await admin.from('suppliers').select('fudo_provider_id').eq('id', prov).single()
+        if (!sup?.fudo_provider_id) return null
+        const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
+        gastoLote = await createFudoExpenseForReceipt({
+          fudoProviderId: sup.fudo_provider_id, qty: 1, costTotal: montoPrevisto, costPerUnit: null,
+          receivedDate: fudoDateLote, gasto, medioPago: paymentMethod,
+        })
+        return gastoLote
+      }
+
       for (const it of llegan) {
         const total = typeof it.totalCost === 'number' && it.totalCost > 0 ? it.totalCost : null
         const nota = [note, it.note].map((x) => (x ?? '').trim()).filter(Boolean).join(' — ') || null
@@ -463,7 +505,7 @@ export async function POST(request: NextRequest) {
             note: nota,
             paymentMethod,
             skipFudoExpense: true,
-          })
+          }, { gastoLote: obtenerGastoLote })
           const ok = r.status < 300 && r.json.success === true
           resultados.push({ orderId: it.orderId, ok, error: ok ? undefined : String(r.json.error ?? 'Error'), stockUpdated: Boolean(r.json.stockUpdated) })
           if (ok) {
@@ -486,7 +528,7 @@ export async function POST(request: NextRequest) {
       let resto: number | null = null
       const factura = typeof invoiceTotal === 'number' && invoiceTotal > 0 ? invoiceTotal : null
       const batchPaymentStatus = paymentMethod === 'cuenta_corriente' ? 'a_pagar' : 'pagado'
-      if (factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
+      if (!facturaPrevia && factura && resultados.some((r) => r.ok) && factura - cargadoPorProducto >= 1) {
         resto = Math.round((factura - cargadoPorProducto) * 100) / 100
         const restoDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
         const { data: restoInserted, error: restoErr } = await admin.from('stock_receipts').insert({
@@ -511,27 +553,81 @@ export async function POST(request: NextRequest) {
         if (restoReceiptId) receiptIds.push(restoReceiptId)
       }
 
+      // IVA/IIBB en su recibo (sin "total de la factura"); se vincula al gasto con el resto
+      if (impuestosLote > 0 && gasto && resultados.some((r) => r.ok)) {
+        const fechaImpuestos = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+        const idImpuestos = await reciboDeImpuestos(admin, { gasto, monto: impuestosLote, supplierId, source: llegan[0].source, userId: user.id, receivedDate: fechaImpuestos, paymentStatus: batchPaymentStatus, paymentMethod: paymentMethod ?? null, fudoExpenseId: null })
+        if (idImpuestos) receiptIds.push(idImpuestos)
+      }
+
       // Categoría y comprobante en los recibos del lote (IVA/IIBB una sola vez)
       await guardarDatosGasto(admin, receiptIds, gasto)
+
+      // Factura ya cargada: los productos se suman a ese gasto. Si la primera
+      // carga dejó un "importe sin detallar", estos productos ya estaban en el
+      // total: salen de ahí (el gasto no cambia). Si no, el gasto sube.
+      if (facturaPrevia && resultados.some((r) => r.ok)) {
+        const sumaNuevos = Math.round(cargadoPorProducto * 100) / 100
+        if (receiptIds.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (admin.from('stock_receipts') as any).update({ fudo_expense_id: facturaPrevia.expenseId }).in('id', receiptIds)
+        }
+        if (sumaNuevos > 0) {
+          if (facturaPrevia.resto && facturaPrevia.resto.cost_total + 0.01 >= sumaNuevos) {
+            const nuevoResto = Math.round((facturaPrevia.resto.cost_total - sumaNuevos) * 100) / 100
+            await admin.from('stock_receipts').update({ cost_total: nuevoResto }).eq('id', facturaPrevia.resto.id)
+          } else {
+            const { sumarAGastoFudo, postFudoPayment } = await import('@/lib/fudo/expenses')
+            const unido = await sumarAGastoFudo({ expenseId: facturaPrevia.expenseId, delta: sumaNuevos, medioPago: paymentMethod })
+            if (unido && batchPaymentStatus === 'pagado') {
+              await postFudoPayment({ expenseId: facturaPrevia.expenseId, amount: sumaNuevos, medio: paymentMethod })
+                .catch((e) => console.warn('[confirm_arrival_batch] pago de lo agregado a la factura:', e instanceof Error ? e.message : e))
+            }
+          }
+        }
+      }
 
       // UN SOLO gasto en Fudo para toda la compra del proveedor.
       // Si vino invoiceTotal lo usamos (cubre ítems + importe sin detallar).
       // Si no, usamos la suma de los costos recibidos.
-      const totalParaFudo = factura ?? (cargadoPorProducto > 0 ? Math.round(cargadoPorProducto * 100) / 100 : null)
+      const totalParaFudo = facturaPrevia ? null : factura ?? (cargadoPorProducto > 0 ? Math.round((cargadoPorProducto + impuestosLote) * 100) / 100 : null)
+      if ((gastoLote as { id: string } | null) && !(totalParaFudo && supplierId && resultados.some((r) => r.ok))) {
+        console.warn('[confirm_arrival_batch] gasto de Fudo creado sin recibos para vincular:', (gastoLote as unknown as { id: string }).id)
+      }
       if (totalParaFudo && supplierId && resultados.some((r) => r.ok)) {
         const fudoDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
         const { data: batchSupp } = await admin.from('suppliers').select('fudo_provider_id').eq('id', supplierId).single()
         if (batchSupp?.fudo_provider_id) {
           const { createFudoExpenseForReceipt } = await import('@/lib/fudo/expenses')
-          const batchExpense = await createFudoExpenseForReceipt({
-            fudoProviderId: batchSupp.fudo_provider_id,
-            qty: 1,
-            costTotal: totalParaFudo,
-            costPerUnit: null,
-            receivedDate: fudoDate,
-            gasto,
-            medioPago: paymentMethod,
-          })
+          // Si ya se creó al primer producto, se usa ese (y se ajusta el monto
+          // si no entró todo lo previsto); si no, se crea ahora como siempre.
+          // (cast: TS no ve que obtenerGastoLote lo asigna)
+          let batchExpense = gastoLote as { id: string; amount: number } | null
+          if (batchExpense && Math.abs(batchExpense.amount - totalParaFudo) >= 0.01) {
+            const { fudoFetch } = await import('@/lib/fudoClient')
+            await fudoFetch(`/expenses/${encodeURIComponent(batchExpense.id)}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ data: { id: batchExpense.id, type: 'Expense', attributes: { amount: totalParaFudo } } }),
+            }).catch((e) => console.warn('[confirm_arrival_batch] no se pudo ajustar el monto del gasto:', e instanceof Error ? e.message : e))
+            batchExpense = { id: batchExpense.id, amount: totalParaFudo }
+            // Cuenta corriente: la deuda que anotó Fudo al crearlo pasa al monto final
+            if (paymentMethod === 'cuenta_corriente') {
+              const { ajustarDeudaCtaCte } = await import('@/lib/fudo/expenses')
+              await ajustarDeudaCtaCte(batchExpense.id, totalParaFudo)
+            }
+          }
+          if (!batchExpense) {
+            batchExpense = await createFudoExpenseForReceipt({
+              fudoProviderId: batchSupp.fudo_provider_id,
+              qty: 1,
+              costTotal: totalParaFudo,
+              costPerUnit: null,
+              receivedDate: fudoDate,
+              gasto,
+              medioPago: paymentMethod,
+            })
+          }
           if (batchExpense) {
             // Vincular el gasto único a todos los recibos del lote
             if (receiptIds.length > 0) {
@@ -666,37 +762,59 @@ export async function POST(request: NextRequest) {
 type Resultado = { status: number; json: Record<string, unknown> }
 
 /**
+ * Factura ya cargada (mismo proveedor + número + forma de pago, últimos 7
+ * días) y su "importe sin detallar" si lo tiene. Para que "Llegó todo" no
+ * cree otro gasto ni repita el total cuando la factura se carga en partes.
+ */
+async function buscarFacturaPrevia(
+  admin: ReturnType<typeof createAdminClient>,
+  supplierId: string | null, numero: string | null, medio: string | null,
+): Promise<{ expenseId: string; resto: { id: number; cost_total: number } | null } | null> {
+  const n = numero?.trim()
+  if (!n || !supplierId) return null
+  // Fecha argentina (received_date es la fecha AR): con toISOString, después de las 21 se corría un día
+  const desde = new Date(Date.now() - 7 * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data } = await (admin.from('stock_receipts') as any)
+    .select('id, fudo_expense_id, payment_method, stock_item_id, cost_total, note')
+    .eq('supplier_id', supplierId).eq('comprobante_numero', n)
+    .not('fudo_expense_id', 'is', null).gte('received_date', desde)
+    .order('id', { ascending: false })
+  const filas = (data ?? []) as { id: number; fudo_expense_id: string; payment_method: string | null; stock_item_id: string | null; cost_total: number | null; note: string | null }[]
+  const previo = filas.find((r) => r.payment_method === medio)
+  if (!previo) return null
+  const resto = filas.find((r) => r.fudo_expense_id === previo.fudo_expense_id && !r.stock_item_id && (r.note ?? '').startsWith('Factura del proveedor'))
+  return { expenseId: String(previo.fudo_expense_id), resto: resto ? { id: resto.id, cost_total: Number(resto.cost_total) || 0 } : null }
+}
+
+/**
  * Gasto de Fudo para un recibo de "Llegó". Si ya hay otro recibo del mismo
  * proveedor con el MISMO número de comprobante (la factura se cargó producto
  * por producto), se suma a ese gasto en vez de crear uno por producto.
  */
 async function gastoFudoParaRecibo(
   admin: ReturnType<typeof createAdminClient>,
-  p: Parameters<typeof import('@/lib/fudo/expenses').createFudoExpenseForReceipt>[0] & { supplierId: string | null; receiptId: number | null },
+  p: Parameters<typeof import('@/lib/fudo/expenses').createFudoExpenseForReceipt>[0] & {
+    supplierId: string | null; receiptId: number | null
+    /** IVA + IIBB (Factura A, primera carga de la factura): el gasto nuevo va por el total a pagar */
+    impuestos?: number
+  },
 ) {
   const { createFudoExpenseForReceipt, sumarAGastoFudo } = await import('@/lib/fudo/expenses')
-  const numero = p.gasto?.numero?.trim()
-  if (numero && p.supplierId) {
-    const desde = new Date(Date.now() - 7 * 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data } = await (admin.from('stock_receipts') as any)
-      .select('fudo_expense_id, payment_method')
-      .eq('supplier_id', p.supplierId)
-      .eq('comprobante_numero', numero)
-      .not('fudo_expense_id', 'is', null)
-      .neq('id', p.receiptId ?? -1)
-      .gte('received_date', desde)
-      .order('id', { ascending: false })
-      .limit(1)
-    const previo = (data ?? [])[0] as { fudo_expense_id: string; payment_method: string | null } | undefined
-    if (previo && previo.payment_method === (p.medioPago ?? null)) {
-      const unido = await sumarAGastoFudo({ expenseId: String(previo.fudo_expense_id), delta: p.costTotal, medioPago: p.medioPago })
-      if (unido) return unido
+  const previa = await buscarFacturaPrevia(admin, p.supplierId, p.gasto?.numero ?? null, p.medioPago ?? null)
+  if (previa) {
+    // La primera carga dejó un "importe sin detallar" que ya incluye este
+    // producto: sale de ahí y el gasto no cambia (amount 0 = no hay pago extra)
+    if (previa.resto && previa.resto.cost_total + 0.01 >= p.costTotal) {
+      await admin.from('stock_receipts').update({ cost_total: Math.round((previa.resto.cost_total - p.costTotal) * 100) / 100 }).eq('id', previa.resto.id)
+      return { id: previa.expenseId, amount: 0 }
     }
+    const unido = await sumarAGastoFudo({ expenseId: previa.expenseId, delta: p.costTotal, medioPago: p.medioPago })
+    if (unido) return unido
   }
-  const { supplierId: _s, receiptId: _r, ...crear } = p
+  const { supplierId: _s, receiptId: _r, impuestos = 0, ...crear } = p
   void _s; void _r
-  return createFudoExpenseForReceipt(crear)
+  return createFudoExpenseForReceipt({ ...crear, costTotal: Math.round((crear.costTotal + impuestos) * 100) / 100 })
 }
 
 /**
@@ -705,6 +823,52 @@ async function gastoFudoParaRecibo(
  * Las columnas las agrega supabase/migrations/20261005_stock_receipts_gasto_columns.sql:
  * si todavía no se corrió, no se guarda (en Fudo igual queda) y nada se corta.
  */
+/** IVA + IIBB de la factura (solo Factura A los trae) */
+function impuestosDe(gasto: DatosGasto | null): number {
+  return Math.round(((gasto?.iva ?? 0) + (gasto?.iibb ?? 0)) * 100) / 100
+}
+
+/**
+ * Recibo con el IVA/IIBB de la factura (sin producto: no es costo de insumos).
+ * El gasto de Fudo lleva el total a pagar (productos + impuestos); con este
+ * recibo, la suma de los recibos de la factura da lo mismo que el gasto
+ * (Pagos, deuda en Cta. Cte., arqueo).
+ */
+async function reciboDeImpuestos(admin: ReturnType<typeof createAdminClient>, p: {
+  gasto: DatosGasto; monto: number; supplierId: string | null; source: 'cocina' | 'barra'; userId: string
+  receivedDate: string; paymentStatus: 'pagado' | 'a_pagar'; paymentMethod: string | null; fudoExpenseId: string | null
+}): Promise<number | null> {
+  const $ = (n: number) => `$${n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const detalle = [p.gasto.iva ? `IVA ${$(p.gasto.iva)}` : null, p.gasto.iibb ? `IIBB ${$(p.gasto.iibb)}` : null].filter(Boolean).join(' · ')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (admin.from('stock_receipts') as any).insert({
+    stock_item_id: null,
+    supplier_id: p.supplierId,
+    order_source: p.source,
+    order_id: null,
+    qty: 1,
+    unit: null,
+    cost_total: p.monto,
+    cost_per_unit: null,
+    note: `${NOTA_IMPUESTOS}${detalle ? ` — ${detalle}` : ''}`,
+    received_by: p.userId,
+    received_date: p.receivedDate,
+    payment_status: p.paymentStatus,
+    paid_at: p.paymentStatus === 'pagado' ? new Date().toISOString() : null,
+    paid_by: p.paymentStatus === 'pagado' ? p.userId : null,
+    payment_method: p.paymentMethod,
+    ...(p.fudoExpenseId ? { fudo_expense_id: p.fudoExpenseId } : {}),
+  }).select('id').single()
+  if (error) {
+    console.warn('[impuestos] recibo de impuestos no registrado:', error.message)
+    return null
+  }
+  const id = (data as { id?: number } | null)?.id ?? null
+  // Categoría y comprobante como el resto de la factura (el IVA/IIBB ya es el monto)
+  if (id) await guardarDatosGasto(admin, [id], { ...p.gasto, iva: null, iibb: null })
+  return id
+}
+
 async function guardarDatosGasto(admin: ReturnType<typeof createAdminClient>, receiptIds: number[], gasto: DatosGasto | null) {
   if (!gasto || receiptIds.length === 0) return
   const comunes = {
@@ -723,7 +887,14 @@ async function guardarDatosGasto(admin: ReturnType<typeof createAdminClient>, re
 const respuesta = (json: Record<string, unknown>, init?: { status?: number }): Resultado => ({ json, status: init?.status ?? 200 })
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, user: { id: string }, body: any): Promise<Resultado> {
+async function confirmarLlegada(
+  admin: ReturnType<typeof createAdminClient>,
+  user: { id: string },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  body: any,
+  /** gastoLote: en "Llegó todo", el gasto único del proveedor (se crea al primer producto que lo necesita) */
+  opciones: { gastoLote?: () => Promise<{ id: string } | null> } = {},
+): Promise<Resultado> {
   const { orderId, source, mode, expense, receivedQty: receivedQtyEscrita, unitCost, totalCost, amount, note, paymentMethod, expiresAt, skipFudoExpense } = body as {
     orderId: number
     source: 'cocina' | 'barra'
@@ -809,7 +980,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     }
     const { data: si } = await admin
       .from('stock_items')
-      .select('id, name, unit, current_qty, cost_per_unit, supplier_id, fudo_ingredient_id')
+      .select('id, name, unit, current_qty, cost_per_unit, supplier_id, fudo_ingredient_id, fudo_product_id, fudo_skip')
       .eq('id', stockItemId)
       .single()
     if (!si) return respuesta({ success: false, error: 'Insumo no encontrado' }, { status: 404 })
@@ -831,22 +1002,77 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
         error: `El precio unitario ($${Math.round(costPerUnit).toLocaleString('es-AR')}/${si.unit}) parece un error de carga. Verificá el monto antes de continuar.`,
       }, { status: 422 })
     }
-    // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja kardex
+    const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    // El proveedor del PEDIDO toma prioridad (el encargado lo asignó explícitamente);
+    // el proveedor del insumo es solo el default para órdenes nuevas, no para el recibo.
+    const effectiveSupplierId = (order as { supplier_id?: string | null }).supplier_id ?? si.supplier_id ?? null
+    // Usa el total, o el precio unitario × cantidad si solo vino el unitario
+    const receiptCostTotal = totalNum ?? (costPerUnit != null ? Math.round(costPerUnit * qty * 100) / 100 : null)
+
+    // Gasto en Fudo CON el producto adentro (detalle de mercadería), ANTES de
+    // sumar el stock: si Fudo suma el stock por el gasto, acá no se suma de
+    // nuevo (sería doble). Si no lo suma, el stock va por delta como siempre.
+    let lveExpenseFudoProviderId: string | null = null
+    let fudoSumadoPorGasto: { fudoAfter: number | null } | null = null
+    const vaAFudo = !si.fudo_skip && Boolean(si.fudo_ingredient_id || si.fudo_product_id)
+    const productoAlGasto = async (expenseId: string) => {
+      if (!vaAFudo || receiptCostTotal == null || !(receiptCostTotal > 0)) return
+      const { agregarItemAGastoFudo } = await import('@/lib/fudo/expenses')
+      const r = await agregarItemAGastoFudo({
+        expenseId,
+        fudoIngredientId: si.fudo_ingredient_id ?? null,
+        fudoProductId: si.fudo_ingredient_id ? null : si.fudo_product_id ?? null,
+        qty,
+        precioTotal: receiptCostTotal,
+      })
+      if (r.sumoStock) fudoSumadoPorGasto = { fudoAfter: r.fudoAfter }
+    }
+    // Factura A: IVA/IIBB al gasto de Fudo (total a pagar) y a un recibo de
+    // impuestos. Si esta factura ya se cargó (otro producto), ya están ahí.
+    let impuestos = 0
+    if (!skipFudoExpense && impuestosDe(gasto) > 0) {
+      if (await buscarFacturaPrevia(admin, effectiveSupplierId, gasto?.numero ?? null, paymentMethod ?? null)) gasto = gasto ? { ...gasto, iva: null, iibb: null } : gasto
+      else impuestos = impuestosDe(gasto)
+    }
+    if (!skipFudoExpense && receiptCostTotal != null && receiptCostTotal > 0 && effectiveSupplierId) {
+      const { data: suppRow } = await admin.from('suppliers').select('fudo_provider_id').eq('id', effectiveSupplierId).single()
+      if (suppRow?.fudo_provider_id) {
+        lveExpenseFudoProviderId = suppRow.fudo_provider_id
+        lveExpense = await gastoFudoParaRecibo(admin, {
+          supplierId: effectiveSupplierId,
+          receiptId: null,
+          fudoProviderId: suppRow.fudo_provider_id,
+          fudoIngredientId: si.fudo_ingredient_id ?? null,
+          qty,
+          costTotal: receiptCostTotal,
+          costPerUnit,
+          receivedDate,
+          gasto,
+          medioPago: paymentMethod,
+          impuestos,
+        })
+        if (lveExpense) await productoAlGasto(lveExpense.id)
+      }
+    } else if (skipFudoExpense && opciones.gastoLote && receiptCostTotal != null && receiptCostTotal > 0) {
+      const gastoLote = await opciones.gastoLote()
+      if (gastoLote) await productoAlGasto(gastoLote.id)
+    }
+
+    // syncToFudo con reason 'reception' escribe por DELTA sobre Fudo y deja
+    // kardex; con fudoSumadoPorGasto solo registra en LVE (Fudo ya sumó)
     const write = await syncToFudo(admin, stockItemId, Math.round((Number(si.current_qty ?? 0) + qty) * 100) / 100, user.id, {
       reason: 'reception',
-      note: `Recepción: ${order.product_name} (+${qty} ${si.unit})${note ? ` — ${note}` : ''}`,
+      note: `Recepción: ${order.product_name} (+${qty} ${si.unit})${note ? ` — ${note}` : ''}${fudoSumadoPorGasto ? ' — sumado en Fudo por el gasto' : ''}`,
       costPerUnit,
+      fudoSumadoPorGasto,
     })
     if (!write.success) {
+      if (lveExpense || fudoSumadoPorGasto) console.error('[confirm_arrival] el gasto/producto ya está en Fudo pero LVE no registró el stock:', write.error)
       return respuesta({ success: false, error: write.error ?? 'No se pudo actualizar el stock' }, { status: 502 })
     }
     stockUpdated = true
     fudoSynced = write.fudoSynced
     // Recibo (precio de compra) — base del historial de precios + cuentas a pagar
-    const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
-    // El proveedor del PEDIDO toma prioridad (el encargado lo asignó explícitamente);
-    // el proveedor del insumo es solo el default para órdenes nuevas, no para el recibo.
-    const effectiveSupplierId = (order as { supplier_id?: string | null }).supplier_id ?? si.supplier_id ?? null
     const receiptBase = {
       stock_item_id: stockItemId,
       supplier_id: effectiveSupplierId,
@@ -875,34 +1101,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
     batchCostTotal = receiptBase.cost_total
 
     if (!skipFudoExpense) {
-      // Crear gasto en Fudo si el proveedor y el monto están disponibles.
-      // Usa receiptBase.cost_total que ya tiene el fallback unitCost × qty,
-      // por si el encargado cargó solo el precio unitario y no el total.
-      const receiptCostTotal = receiptBase.cost_total
-      let lveExpenseFudoProviderId: string | null = null
-      if (receiptCostTotal != null && receiptCostTotal > 0 && effectiveSupplierId) {
-        const { data: suppRow } = await admin
-          .from('suppliers')
-          .select('fudo_provider_id')
-          .eq('id', effectiveSupplierId)
-          .single()
-        if (suppRow?.fudo_provider_id) {
-          lveExpenseFudoProviderId = suppRow.fudo_provider_id
-          lveExpense = await gastoFudoParaRecibo(admin, {
-            supplierId: effectiveSupplierId,
-            receiptId: lveReceiptId,
-            fudoProviderId: suppRow.fudo_provider_id,
-            fudoIngredientId: si.fudo_ingredient_id ?? null,
-            qty,
-            costTotal: receiptCostTotal,
-            costPerUnit,
-            receivedDate,
-            gasto,
-            medioPago: paymentMethod,
-          })
-        }
-      }
-
+      // El gasto (con el producto adentro) ya se creó arriba, antes del stock
       // Guardar fudo_expense_id en el recibo, o encolar para reintento si Fudo falló
       if (lveExpense && lveReceiptId) {
         await admin.from('stock_receipts').update({ fudo_expense_id: lveExpense.id }).eq('id', lveReceiptId)
@@ -910,7 +1109,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
         const { encolarCrearGasto } = await import('@/lib/fudo/reintentos')
         await encolarCrearGasto(admin, {
           fudoProviderId: lveExpenseFudoProviderId,
-          amount: receiptCostTotal,
+          amount: Math.round((receiptCostTotal + impuestos) * 100) / 100,
           date: receivedDate,
           receiptId: lveReceiptId,
           thenPay: paymentStatus === 'pagado',
@@ -921,8 +1120,13 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
         })
       }
 
+      // IVA/IIBB en su recibo (mismo gasto y mismo pago que el producto)
+      if (impuestos > 0 && gasto && lveReceiptId) {
+        await reciboDeImpuestos(admin, { gasto, monto: impuestos, supplierId: effectiveSupplierId, source, userId: user.id, receivedDate, paymentStatus, paymentMethod: paymentMethod ?? null, fudoExpenseId: lveExpense?.id ?? null })
+      }
+
       // Si el gasto se creó en Fudo y el pago fue de contado, imputar el payment
-      if (lveExpense && paymentStatus === 'pagado') {
+      if (lveExpense && lveExpense.amount > 0 && paymentStatus === 'pagado') {
         const { postFudoPayment } = await import('@/lib/fudo/expenses')
         try {
           await postFudoPayment({ expenseId: lveExpense.id, amount: lveExpense.amount, medio: paymentMethod })
@@ -1033,6 +1237,13 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
   if (mode === 'sin_stock' && paymentMethod && sinStockAmount != null) {
     const sinStockSupplierId = (order as { supplier_id?: string | null }).supplier_id ?? null
     const receivedDate = new Date().toLocaleString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }).slice(0, 10)
+    // Factura A: IVA/IIBB al gasto (total a pagar) + recibo de impuestos, salvo
+    // que la factura ya se haya cargado antes
+    let impuestosSinStock = 0
+    if (!skipFudoExpense && impuestosDe(gasto) > 0) {
+      if (await buscarFacturaPrevia(admin, sinStockSupplierId, gasto?.numero ?? null, paymentMethod ?? null)) gasto = gasto ? { ...gasto, iva: null, iibb: null } : gasto
+      else impuestosSinStock = impuestosDe(gasto)
+    }
     const { data: ssReceiptInserted, error: ssReceiptErr } = await admin.from('stock_receipts').insert({
       stock_item_id: null as string | null,
       supplier_id: sinStockSupplierId,
@@ -1072,11 +1283,15 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             receivedDate,
             gasto,
             medioPago: paymentMethod,
+            impuestos: impuestosSinStock,
           })
+          if (impuestosSinStock > 0 && gasto) {
+            await reciboDeImpuestos(admin, { gasto, monto: impuestosSinStock, supplierId: sinStockSupplierId, source, userId: user.id, receivedDate, paymentStatus, paymentMethod, fudoExpenseId: sinStockFudoExpense?.id ?? null })
+          }
           if (sinStockFudoExpense) {
             lveExpense = sinStockFudoExpense
             await admin.from('stock_receipts').update({ fudo_expense_id: sinStockFudoExpense.id }).eq('id', ssReceiptId)
-            if (paymentStatus === 'pagado') {
+            if (paymentStatus === 'pagado' && sinStockFudoExpense.amount > 0) {
               const { postFudoPayment } = await import('@/lib/fudo/expenses')
               try {
                 await postFudoPayment({ expenseId: sinStockFudoExpense.id, amount: sinStockFudoExpense.amount, medio: paymentMethod })
@@ -1097,7 +1312,7 @@ async function confirmarLlegada(admin: ReturnType<typeof createAdminClient>, use
             const { encolarCrearGasto } = await import('@/lib/fudo/reintentos')
             await encolarCrearGasto(admin, {
               fudoProviderId: sinStockSupp.fudo_provider_id,
-              amount: sinStockAmount,
+              amount: Math.round((sinStockAmount + impuestosSinStock) * 100) / 100,
               date: receivedDate,
               receiptId: ssReceiptId,
               thenPay: paymentStatus === 'pagado',

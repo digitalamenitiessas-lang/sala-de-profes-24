@@ -451,6 +451,110 @@ export async function postFudoExpense(params: Parameters<typeof fudoExpenseBody>
 }
 
 /**
+ * Detalle de mercadería: agrega el producto al gasto de Fudo. En Fudo, un
+ * gasto con insumo SUMA stock; por eso se lee el stock antes y después:
+ *   · sumoStock: Fudo sumó la cantidad → quien llama NO debe sumarla otra vez
+ *     (syncToFudo con fudoSumadoPorGasto).
+ *   · si no sumó (o el ítem no entró) → se suma como siempre, por delta.
+ * Nunca queda sin sumar ni sumado dos veces. Si agregar el ítem le cambia el
+ * monto al gasto, se le devuelve el monto que tenía.
+ */
+export async function agregarItemAGastoFudo(params: {
+  expenseId: string
+  fudoIngredientId?: string | null
+  fudoProductId?: string | null
+  qty: number
+  /**
+   * TOTAL del renglón (cantidad × precio). En Fudo el "precio" de un ítem de
+   * gasto es el total de esa línea: con el precio por kg el detalle mostraba
+   * el costo de 1 kg (gasto 2240: Jamón crudo 2,61 kg → $13.933 en vez de $36.364).
+   */
+  precioTotal: number
+}): Promise<{ itemCreado: boolean; sumoStock: boolean; fudoAfter: number | null }> {
+  const { expenseId, fudoIngredientId, fudoProductId, qty, precioTotal } = params
+  const nada = { itemCreado: false, sumoStock: false, fudoAfter: null }
+  if (!(qty > 0) || !(precioTotal > 0) || (!fudoIngredientId && !fudoProductId)) return nada
+  const { readFudoIngredientStock, readFudoProductStock } = await import('@/lib/fudo/stock-sync')
+  const leer = () => (fudoIngredientId ? readFudoIngredientStock(fudoIngredientId) : readFudoProductStock(fudoProductId!))
+  try {
+    const antes = await leer()
+    // Sin control de stock en Fudo no hay cómo verificar: se suma como siempre
+    if (antes === null) return nada
+    const montoRes = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=amount`)
+    const montoAntes = Number(montoRes?.data?.attributes?.amount ?? NaN)
+
+    await fudoFetch('/expense-items', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: {
+          type: 'ExpenseItem',
+          attributes: { price: Math.round(precioTotal * 100) / 100, quantity: qty },
+          relationships: {
+            expense: { data: { type: 'Expense', id: expenseId } },
+            ...(fudoIngredientId
+              ? { ingredient: { data: { type: 'Ingredient', id: fudoIngredientId } } }
+              : { product: { data: { type: 'Product', id: fudoProductId! } } }),
+          },
+        },
+      }),
+    })
+
+    const despues = await leer().catch(() => null)
+    // Con margen: alguna venta justo en el medio puede mover un poco el número.
+    // Si el ítem entró pero no se puede releer, se asume que Fudo lo sumó (es
+    // lo que hace con un gasto con insumo): sumarlo de nuevo sería doble.
+    const sumoStock = despues === null || despues - antes >= qty * 0.5
+
+    // El monto del gasto lo manda Sala de Profes (factura, resto sin detallar)
+    if (Number.isFinite(montoAntes)) {
+      const r = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=amount`).catch(() => null)
+      const montoDespues = Number(r?.data?.attributes?.amount ?? NaN)
+      if (Number.isFinite(montoDespues) && Math.abs(montoDespues - montoAntes) >= 0.01) {
+        await fudoFetch(`/expenses/${encodeURIComponent(expenseId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { id: expenseId, type: 'Expense', attributes: { amount: montoAntes } } }),
+        }).catch((e) => console.warn('[agregarItemAGastoFudo] no se pudo devolver el monto:', e instanceof Error ? e.message : e))
+      }
+    }
+    cache = null
+    return { itemCreado: true, sumoStock, fudoAfter: sumoStock && despues !== null ? despues : null }
+  } catch (err) {
+    console.warn('[agregarItemAGastoFudo] sin detalle, el stock se suma como siempre:', err instanceof Error ? err.message : err)
+    return nada
+  }
+}
+
+/**
+ * Cuenta corriente: Fudo anota la deuda (un pago "Cta. Cte.") por el monto del
+ * gasto AL CREARLO. Si después el monto cambia (misma factura cargada de a un
+ * producto, o "Llegó todo" que se ajusta al final), la deuda quedaba en el
+ * monto viejo y aparecía un "saldo a pagar" que no correspondía (gasto 2240).
+ * Esto lleva la deuda al monto actual. Si no hay deuda en Cta. Cte., no hace nada.
+ */
+export async function ajustarDeudaCtaCte(expenseId: string, montoTotal: number): Promise<void> {
+  try {
+    const ctaCteId = await fudoPaymentMethodId('cuenta_corriente')
+    const res = await fudoFetch<{ data?: JsonApiRes; included?: JsonApiRes[] }>(
+      `/expenses/${encodeURIComponent(expenseId)}?include=payments&fields[expense]=payments`,
+    )
+    const deuda = (res.included ?? []).find((i) => i.type === 'Payment' && i.attributes?.canceled !== true
+      && (i.relationships?.paymentMethod?.data as { id: string } | null | undefined)?.id === ctaCteId)
+    if (!deuda) return
+    const monto = Math.round(montoTotal * 100) / 100
+    if (Math.abs(Number(deuda.attributes?.amount ?? 0) - monto) < 0.01) return
+    await fudoFetch(`/payments/${encodeURIComponent(deuda.id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: deuda.id, type: 'Payment', attributes: { amount: monto } } }),
+    })
+  } catch (err) {
+    console.warn('[ajustarDeudaCtaCte] la deuda en Cta. Cte. no se pudo ajustar:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
  * Suma un producto a un gasto de Fudo que ya existe (misma factura cargada
  * producto por producto con "Llegó"). Solo si el gasto sigue en el mismo
  * estado que la compra nueva: cuenta corriente → impago; pagado → pagado (el
@@ -472,6 +576,8 @@ export async function sumarAGastoFudo(params: { expenseId: string; delta: number
       body: JSON.stringify({ data: { id: expenseId, type: 'Expense', attributes: { amount: nuevo } } }),
     })
     cache = null
+    // Cuenta corriente: la deuda anotada en Fudo pasa al total nuevo
+    if (ctaCte) await ajustarDeudaCtaCte(expenseId, nuevo)
     return { id: expenseId, amount: delta }
   } catch (err) {
     console.warn('[sumarAGastoFudo] va como gasto aparte:', err instanceof Error ? err.message : err)
@@ -501,31 +607,9 @@ export async function createFudoExpenseForReceipt(params: {
     const expenseId = await postFudoExpense({ fudoProviderId, amount: costTotal, date: receivedDate, gasto, medioPago })
     if (!expenseId) return null
 
-    // Ítem del ingrediente: DESACTIVADO. En Fudo, un gasto con insumo suma
-    // stock; «Llegó» ya sumó ese stock (delta en Fudo), así que agregarlo
-    // acá contaría la compra dos veces. El gasto queda con monto y proveedor.
-    // Para activarlo hay que sacar primero la suma de stock de «Llegó».
-    const AGREGAR_INSUMO_AL_GASTO = false
-    if (AGREGAR_INSUMO_AL_GASTO && fudoIngredientId && costPerUnit != null && qty > 0) {
-      try {
-        await fudoFetch('/expense-items', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            data: {
-              type: 'ExpenseItem',
-              attributes: { price: costPerUnit, quantity: qty },
-              relationships: {
-                expense: { data: { type: 'Expense', id: expenseId } },
-                ingredient: { data: { type: 'Ingredient', id: fudoIngredientId } },
-              },
-            },
-          }),
-        })
-      } catch (itemErr) {
-        console.warn('[createFudoExpenseForReceipt] expense-item error:', itemErr instanceof Error ? itemErr.message : itemErr)
-      }
-    }
+    // El producto (detalle de mercadería) lo agrega agregarItemAGastoFudo,
+    // que además decide quién suma el stock en Fudo para no contarlo dos veces.
+    void fudoIngredientId; void qty; void costPerUnit
 
     // Invalidar cache para que conciliación vea el nuevo gasto
     cache = null

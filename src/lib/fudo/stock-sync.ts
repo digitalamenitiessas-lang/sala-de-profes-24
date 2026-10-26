@@ -87,6 +87,12 @@ type StockWriteOptions = {
    * cuando LVE está desfasado o cuando el valor viene clampeado a 0.
    */
   deltaOverride?: number | null
+  /**
+   * Recepción cuyo stock en Fudo YA lo sumó el gasto (el producto va dentro
+   * del gasto de Fudo, y un gasto con insumo suma stock). No se escribe a
+   * Fudo otra vez (sería doble); se registra en LVE con lo que quedó en Fudo.
+   */
+  fudoSumadoPorGasto?: { fudoAfter: number | null } | null
 }
 
 const MOVEMENT_TYPE_BY_REASON: Record<StockWriteReason, 'ajuste' | 'merma' | 'entrada'> = {
@@ -1044,6 +1050,9 @@ export async function syncToFudo(
       // el stock real de Fudo con el número (posiblemente viejo) de LVE.
       if (effectiveDelta === 0) {
         fudoResult = { success: true }
+      } else if (writeReason === 'reception' && options.fudoSumadoPorGasto) {
+        fudoResult = { success: true, ...(typeof options.fudoSumadoPorGasto.fudoAfter === 'number' ? { fudoAfter: options.fudoSumadoPorGasto.fudoAfter } : {}) }
+        if (typeof options.fudoSumadoPorGasto.fudoAfter === 'number') finalQty = options.fudoSumadoPorGasto.fudoAfter
       } else {
         fudoResult = await writeFudoStockDelta(
           { fudoIngredientId: item.fudo_ingredient_id, fudoProductId: item.fudo_product_id },
