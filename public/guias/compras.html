@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guía de compras · Sala de Profes 24</title>
+<!--
+  Guía corta de carga de compras para el equipo de la 24. Se abre desde
+  Compras ("¿Cómo cargo esto?"). compras.pdf se genera desde este archivo
+  (Chrome --headless --print-to-pdf): si se cambia algo acá, regenerarlo.
+-->
+<style>
+  @font-face { font-family: 'Barlow'; src: url('../fonts/Barlow-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'Barlow'; src: url('../fonts/Barlow-SemiBold.ttf'); font-weight: 600; }
+  @font-face { font-family: 'Barlow'; src: url('../fonts/Barlow-Bold.ttf'); font-weight: 700; }
+  @font-face { font-family: 'Playfair'; src: url('../fonts/PlayfairDisplay-Bold.ttf'); font-weight: 700; }
+  :root {
+    --sucursal: #1f3a5f; --verde: #006d5a; --texto: #3d2c24; --suave: #7d6c64;
+    --fondo: #faf8f5; --tarjeta: #ffffff; --linea: #ebe6df; --aviso: #fdf6ec; --aviso-texto: #8b5e34;
+    --rojo: #c0392b; --rojo-fondo: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto); font: 15px/1.5 'Barlow', system-ui, sans-serif; }
+  .hoja { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+  header { background: var(--sucursal); color: #fff; padding: 22px 16px 18px; margin: 0 -16px 18px; }
+  header .hoja { padding-bottom: 0; }
+  header small { display: block; letter-spacing: .12em; font-size: 11px; opacity: .7; text-transform: uppercase; }
+  h1 { font-family: 'Playfair', Georgia, serif; font-size: 27px; line-height: 1.15; margin: 4px 0 6px; }
+  header p { margin: 0; opacity: .85; font-size: 14px; }
+  h2 { font-family: 'Playfair', Georgia, serif; font-size: 19px; margin: 26px 0 10px; color: var(--sucursal); }
+  h3 { font-size: 16px; margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; }
+  h3 .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--sucursal); color: #fff; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; transform: translateY(2px); }
+  .tarjeta { background: var(--tarjeta); border: 1px solid var(--linea); border-radius: 14px; padding: 14px 16px; margin: 0 0 12px; break-inside: avoid; }
+  .esencial { background: var(--sucursal); color: #fff; border: 0; }
+  .esencial h2 { color: #fff; margin-top: 0; }
+  .esencial li { margin-bottom: 6px; }
+  ol, ul { margin: 6px 0 0; padding-left: 20px; }
+  li { margin-bottom: 3px; }
+  b, strong { font-weight: 700; }
+  .boton { display: inline-block; background: var(--verde); color: #fff; border-radius: 6px; padding: 0 6px; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+  .esencial .boton { background: #fff; color: var(--sucursal); }
+  .fudo { margin-top: 8px; font-size: 13.5px; color: var(--suave); border-top: 1px dashed var(--linea); padding-top: 6px; }
+  .fudo b { color: var(--texto); }
+  .ojo { background: var(--aviso); color: var(--aviso-texto); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13.5px; }
+  .mal { background: var(--rojo-fondo); border-color: #f5c6c0; }
+  .mal li::marker { color: var(--rojo); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 7px 6px; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { width: 52%; }
+  .pie { margin-top: 24px; font-size: 12.5px; color: var(--suave); text-align: center; }
+  .imprimir { display: inline-block; margin: 12px 6px 0 0; text-decoration: none; background: #fff; color: var(--sucursal); border: 0; border-radius: 10px; padding: 7px 12px; font: 600 13px 'Barlow', sans-serif; cursor: pointer; }
+  @media (max-width: 480px) { h1 { font-size: 23px; } td:first-child { width: 48%; } }
+  @media print {
+    @page { size: A4; margin: 12mm 12mm 14mm; }
+    body { background: #fff; font-size: 10.2pt; line-height: 1.42; }
+    h1 { font-size: 21pt; }
+    h2 { font-size: 14pt; margin: 14px 0 8px; break-after: avoid; }
+    .tarjeta { padding: 10px 13px; margin-bottom: 9px; }
+    td { padding: 5px 6px; }
+    header { margin: 0 0 14px; border-radius: 10px; padding: 14px 16px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .esencial, .boton, h3 .n, .ojo, .mal { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .hoja { max-width: none; padding: 0; }
+    .imprimir { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="hoja">
+    <small>Sala de Profes 24 · La Vieja Escuela · 24 y Maipú</small>
+    <h1>Guía de compras</h1>
+    <p>Cómo cargar lo que llega para que quede bien en Fudo: importes, mercadería, impuestos y pagos.</p>
+    <a class="imprimir" href="compras.pdf" download="Guia-de-compras-Sala-de-Profes-24.pdf">Descargar PDF</a>
+    <button class="imprimir" onclick="window.print()">Imprimir</button>
+  </div>
+</header>
+
+<main class="hoja">
+
+<section class="tarjeta esencial">
+  <h2>Lo esencial</h2>
+  <ol>
+    <li><b>Todo lo que entra se carga en Sala de Profes</b> (Compras). <b>No lo carguen también en Fudo</b>: la app ya manda el gasto con el detalle de la mercadería y el pago. Cargarlo en los dos lados lo duplica.</li>
+    <li><b>Una factura, un número.</b> Pongan siempre el número del comprobante. Si una factura se carga en partes, <b>el mismo número</b>: la app la junta en un solo gasto.</li>
+    <li><b>Factura A:</b> el importe de cada producto va <b>sin IVA</b> (la pantalla dice "sin IVA"). El IVA y el IIBB van en <b>Datos del gasto</b>.</li>
+    <li><b>Elijan bien cómo se paga:</b> <b>efectivo</b> sale de la caja y lo descuenta el arqueo; <b>cuenta corriente</b> queda como deuda con el proveedor.</li>
+  </ol>
+</section>
+
+<h2>¿Qué pasó? ¿Dónde lo cargo?</h2>
+<section class="tarjeta">
+  <table>
+    <tr><td>Llegó el pedido de un proveedor</td><td>Compras → En camino → <span class="boton">Llegó todo</span></td></tr>
+    <tr><td>Llegó un solo producto del pedido</td><td>En camino → <span class="boton">Llegó</span> en ese producto</td></tr>
+    <tr><td>Llegó algo que no estaba en el pedido</td><td>Llegó todo → <span class="boton">+ Llegó algo más</span></td></tr>
+    <tr><td>Compra sin pedido (súper, verdulería, envío)</td><td>En camino → <span class="boton">Llegó una compra sin pedido</span></td></tr>
+    <tr><td>Un producto no vino</td><td>En Llegó todo: <b>Sigue en camino</b> o <b>No vino</b></td></tr>
+    <tr><td>Pagar una cuenta corriente</td><td>Compras → <b>Pagos</b>, o Control → <b>Cuentas a pagar</b></td></tr>
+    <tr><td>Me equivoqué al cargar</td><td>Compras → Recibidos → <b>Corregir recepción</b></td></tr>
+  </table>
+</section>
+
+<h2>Paso a paso</h2>
+
+<section class="tarjeta">
+  <h3><span class="n">1</span> Llegó el pedido de un proveedor</h3>
+  <ol>
+    <li>Compras → <b>En camino</b> → en el proveedor, tocá <span class="boton">Llegó todo</span>.</li>
+    <li>En cada producto: la <b>cantidad que llegó</b> y el <b>$ total</b> de esa línea, como figura en la factura (con Factura A, <b>sin IVA</b>).</li>
+    <li>Lo que no llegó: tocá el tilde del producto y elegí <b>Sigue en camino</b> (va a venir) o <b>No vino</b> (se cierra, sin stock ni gasto).</li>
+    <li>Si vino algo que no estaba en el pedido: <span class="boton">+ Llegó algo más</span>.</li>
+    <li><b>¿Cómo se paga?</b> y <b>Datos del gasto</b>: categoría, comprobante, número y, si es Factura A, IVA e IIBB.</li>
+    <li><b>Total de la factura</b> (opcional): si lo ponen, en Fudo queda exactamente ese total. <b>Ya incluye los impuestos</b>: no hace falta que cierre con los productos.</li>
+    <li>Tocá <b>Confirmar</b>.</li>
+  </ol>
+  <p class="fudo">En Fudo queda <b>un solo gasto</b> del proveedor, con <b>un renglón por producto</b> y el <b>total a pagar</b>. El stock se suma una sola vez.</p>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">2</span> Llegó un solo producto</h3>
+  <ol>
+    <li>En camino → tocá <span class="boton">Llegó</span> en ese producto.</li>
+    <li><b>Cantidad recibida</b> y <b>Total pagado</b> (con Factura A dice <b>"Total sin IVA"</b>). El vencimiento es opcional.</li>
+    <li><b>¿Cómo se paga?</b> y <b>Datos del gasto</b>, y <b>Confirmar llegada</b>.</li>
+  </ol>
+  <div class="ojo">Si esa factura trae otros productos que cargan aparte, usen <b>el mismo número de comprobante y la misma forma de pago</b>: se suman al mismo gasto y el IVA no se repite.</div>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">3</span> Compra sin pedido (súper, verdulería, envío)</h3>
+  <ol>
+    <li>En camino → <span class="boton">Llegó una compra sin pedido</span>.</li>
+    <li>Elegí <b>¿De qué proveedor?</b> y cargá lo que vino: producto, cantidad y $ total.</li>
+    <li>Igual que siempre: <b>¿Cómo se paga?</b>, <b>Datos del gasto</b> y <b>Confirmar</b>.</li>
+  </ol>
+  <div class="ojo">Si el proveedor no aparece, primero agréguenlo en Fudo y después toquen <b>Proveedores → Sync Fudo</b> en la app.</div>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">4</span> El producto no aparece</h3>
+  <ul>
+    <li>Si está en Fudo pero no en la app: al buscarlo aparece <b>"está en Fudo · traer a stock"</b>. Tocalo y se crea al momento.</li>
+    <li>Si no está en Fudo (vasos, limpieza…): <b>Crear «…» como producto nuevo</b>. Si es un insumo que se usa en recetas, créenlo en Fudo primero.</li>
+    <li>Si es un producto (gaseosa, descartable) y no aparece al armar un pedido, le falta el proveedor: <b>Proveedores → Vínculos y días de pedido</b>.</li>
+  </ul>
+  <p class="fudo">Si un renglón queda <b>"sin insumo"</b>, no suma stock ni en la app ni en Fudo: elijan el insumo sugerido.</p>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">5</span> Tipo de comprobante e impuestos</h3>
+  <table>
+    <tr><td><b>Factura A</b> (IVA discriminado)</td><td>Cada producto <b>sin IVA</b>. IVA e IIBB en Datos del gasto. A Fudo va el <b>total a pagar</b> y en la app queda un recibo <b>"Impuestos de la factura"</b>.</td></tr>
+    <tr><td><b>Factura B, C o ticket</b></td><td>El importe de cada producto <b>tal cual figura</b> (ya trae el IVA). No hay campo de IVA.</td></tr>
+    <tr><td><b>Sin comprobante</b></td><td>Igual, el importe que se pagó. Solo para lo que realmente no tiene comprobante.</td></tr>
+  </table>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">6</span> Cómo se paga</h3>
+  <table>
+    <tr><td><b>Efectivo</b></td><td>Sale de la caja: en Fudo entra en la <b>Caja 1</b> y lo descuenta el <b>arqueo</b>.</td></tr>
+    <tr><td><b>Transferencia / Tarjeta</b></td><td>Queda pagado con ese medio.</td></tr>
+    <tr><td><b>Cuenta corriente</b></td><td>Queda como <b>deuda</b> del proveedor en Fudo y en <b>Pagos</b> de la app, hasta que se paga.</td></tr>
+  </table>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">7</span> Pagar una cuenta corriente</h3>
+  <ol>
+    <li>Compras → <b>Pagos</b> → en cada recibo, <b>Pagar</b>. Para pagar todo lo de un proveedor junto: Control → <b>Cuentas a pagar</b> → <b>Saldar todo</b>.</li>
+    <li>Elegí cómo se paga (efectivo, transferencia o tarjeta). El pago va a Fudo y la deuda baja.</li>
+    <li>Si la factura tiene un recibo de <b>Impuestos de la factura</b>, se paga también: es parte del total.</li>
+  </ol>
+  <div class="ojo">Páguenlo desde la app, no en Fudo: si lo pagan en los dos lados queda pagado dos veces.</div>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">8</span> Me equivoqué</h3>
+  <ol>
+    <li>Compras → <b>Recibidos</b> → en esa compra, <b>Corregir recepción</b>.</li>
+    <li>Ahí se corrige la <b>cantidad</b> (ajusta el stock en la app y en Fudo) o el <b>monto</b>, o se anula todo con <b>Anular recepción completa</b>.</li>
+    <li><b>Después, en Fudo:</b> si cambiaron el monto, corríjanlo también en el gasto; si anularon la compra, <b>anulen el gasto</b>. La app no cambia ni anula el gasto de Fudo sola.</li>
+  </ol>
+  <div class="ojo">No la carguen de nuevo "para arreglarla" sin anular la primera: queda doble.</div>
+</section>
+
+<section class="tarjeta mal">
+  <h3>Lo que desordena Fudo (evitar)</h3>
+  <ul>
+    <li>Cargar la misma compra en la app <b>y</b> en Fudo.</li>
+    <li>Con Factura A, poner los productos <b>con IVA</b> y además cargar el IVA (queda dos veces).</li>
+    <li>Cargar una factura en partes con <b>números distintos</b> o con <b>otra forma de pago</b>.</li>
+    <li>Pagar una cuenta corriente en Fudo en vez de en la app.</li>
+    <li>Dejar productos "sin insumo" cuando el insumo existe.</li>
+  </ul>
+</section>
+
+<p class="pie">¿Una situación que no está acá? Avisen y la sumamos. · Actualizada el 26/10/2026</p>
+</main>
+</body>
+</html>

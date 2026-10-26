@@ -109,6 +109,8 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
   const faltaCantidad = [...llegan, ...extrasOk].some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
   // Categoría del gasto: obligatoria cuando la compra tiene monto
   const datosGasto = useDatosGasto(supplier?.id)
+  // Factura A: los importes de cada producto van sin IVA (el IVA se carga aparte)
+  const sinIva = datosGasto.datos.comprobante === 'factura_a'
   // Misma factura que una carga anterior de hoy: el total ya está en ese gasto
   const facturaYaCargada = !!datosGasto.campos.numeroAnterior && datosGasto.campos.numero.trim() === datosGasto.campos.numeroAnterior
   const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
@@ -326,7 +328,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                           />
                         </label>
                         <label className="block">
-                          <span className="text-[10px] font-semibold text-[#7d6c64]">$ total (opcional)</span>
+                          <span className="text-[10px] font-semibold text-[#7d6c64]">{sinIva ? '$ total sin IVA (opcional)' : '$ total (opcional)'}</span>
                           <input
                             inputMode="decimal"
                             value={f.total}
@@ -392,6 +394,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                 <FilaLlegoDeMas
                   key={e.key}
                   fila={e}
+                  sinIva={sinIva}
                   comprables={comprables}
                   stockById={stockById}
                   fudo={fudo}

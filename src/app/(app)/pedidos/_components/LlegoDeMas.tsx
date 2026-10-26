@@ -28,8 +28,10 @@ export const nuevaFilaExtra = (): FilaExtra => ({ key: Math.random().toString(36
 /** Ingrediente o producto de Fudo que todavía no está en stock */
 export type PendienteFudo = { id: string; name: string; unit?: string; tipo: 'ingrediente' | 'producto' }
 
-export function FilaLlegoDeMas({ fila, comprables, stockById, fudo, cargandoFudo, onCargarFudo, onTraer, onCrear, onChange, onQuitar }: {
+export function FilaLlegoDeMas({ fila, sinIva = false, comprables, stockById, fudo, cargandoFudo, onCargarFudo, onTraer, onCrear, onChange, onQuitar }: {
   fila: FilaExtra
+  /** Factura A: el importe va sin IVA */
+  sinIva?: boolean
   comprables: StockLite[]
   stockById: Map<string, StockLite>
   /** null = todavía no se pidió la lista a Fudo */
@@ -128,7 +130,7 @@ export function FilaLlegoDeMas({ fila, comprables, stockById, fudo, cargandoFudo
             />
           </label>
           <label className="block">
-            <span className="text-[10px] font-semibold text-[#7d6c64]">$ total (opcional)</span>
+            <span className="text-[10px] font-semibold text-[#7d6c64]">{sinIva ? '$ total sin IVA (opcional)' : '$ total (opcional)'}</span>
             <input inputMode="decimal" value={fila.total} onChange={(e) => onChange({ total: e.target.value })} placeholder="0" className="mt-0.5 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-[13px] focus:border-[#006d5a] focus:outline-none" />
           </label>
           {si && (

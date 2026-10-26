@@ -523,6 +523,10 @@ function PedidosContent() {
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight text-[#3d2c24]">Pedidos</h1>
             <p className="mt-0.5 text-[12px] text-[#7d6c64]">Pedir · en camino · recibido · pagos</p>
+            {/* Guía corta de carga (public/guias/compras.html): también se guarda como PDF */}
+            <a href="/guias/compras.html" target="_blank" rel="noopener" className="mt-1 inline-block text-[12px] font-semibold text-[#006d5a] underline underline-offset-2">
+              ¿Cómo cargo esto? Guía de compras
+            </a>
           </div>
           {canManage && (
             <button onClick={() => setNewOrderOpen(true)} className="flex shrink-0 items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-sm font-semibold text-white shadow-sm active:scale-[0.97]">
@@ -1601,7 +1605,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   </div>
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-semibold text-[#3d2c24]">Total pagado ($)</span>
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">{datosGasto.datos.comprobante === 'factura_a' ? 'Total sin IVA ($)' : 'Total pagado ($)'}</span>
                   <div className="relative mt-1">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
                     <input type="number" min="0" step="any" value={totalCost} onChange={(e) => onTotalCostChange(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
