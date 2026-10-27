@@ -63,9 +63,10 @@ export default function CuentasPage() {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [payState, setPayState] = useState<PayState | null>(null)
   const [confirming, setConfirming] = useState(false)
-  /** "Saldar todo" de un proveedor: UN medio de pago para todos los recibos */
-  const [groupPay, setGroupPay] = useState<{ key: string; method: 'efectivo' | 'transferencia' | 'tarjeta' | null } | null>(null)
+  /** "Saldar" de un proveedor: UN medio de pago para todos los recibos hasta una fecha de compra (vacía = todos) */
+  const [groupPay, setGroupPay] = useState<{ key: string; method: 'efectivo' | 'transferencia' | 'tarjeta' | null; hasta: string } | null>(null)
   const [payingAll, setPayingAll] = useState<string | null>(null)
+  const [progreso, setProgreso] = useState<{ hechos: number; total: number } | null>(null)
   const [undoing, setUndoing] = useState<number | null>(null)
   const [showPaid, setShowPaid] = useState(false)
   const [editState, setEditState] = useState<{ id: number; costTotal: string; note: string } | null>(null)
@@ -227,22 +228,30 @@ export default function CuentasPage() {
     }
   }
 
-  /** Salda TODOS los recibos pendientes de un proveedor con UN medio de pago. */
-  async function saldarTodo(group: { key: string; name: string; phone: string | null; contact: string | null; receipts: Receipt[]; total: number; oldestDate: string }, method: 'efectivo' | 'transferencia' | 'tarjeta') {
+  /**
+   * Salda los recibos pendientes de un proveedor con UN medio de pago: todos,
+   * o hasta una fecha de compra ("pagué hasta la factura del 20/10").
+   */
+  async function saldarTodo(group: { key: string; name: string }, recibos: Receipt[], method: 'efectivo' | 'transferencia' | 'tarjeta') {
     setPayingAll(group.key)
+    setProgreso({ hechos: 0, total: recibos.length })
     let saldados = 0
     let fallidos = 0
     let enFudo = 0
-    for (const r of group.receipts) {
+    let monto = 0
+    for (const r of recibos) {
       try {
         const json = await patchStatus(r.id, 'pagado', method)
         saldados++
+        monto += Number(r.cost_total) || 0
         if (json.fudoSynced) enFudo++
       } catch { fallidos++ }
+      setProgreso({ hechos: saldados + fallidos, total: recibos.length })
     }
     setPayingAll(null)
+    setProgreso(null)
     setGroupPay(null)
-    if (fallidos === 0) toast.success(`${group.name}: ${saldados} recibo${saldados !== 1 ? 's' : ''} saldado${saldados !== 1 ? 's' : ''} (${fmtMoney(group.total)})${enFudo > 0 ? ` — ${enFudo} imputado${enFudo !== 1 ? 's' : ''} en Fudo` : ''}`)
+    if (fallidos === 0) toast.success(`${group.name}: ${saldados} recibo${saldados !== 1 ? 's' : ''} saldado${saldados !== 1 ? 's' : ''} (${fmtMoney(monto)})${enFudo > 0 ? ` — ${enFudo} imputado${enFudo !== 1 ? 's' : ''} en Fudo` : ''}`)
     else toast.error(`${group.name}: ${saldados} saldado${saldados !== 1 ? 's' : ''}, ${fallidos} con error — revisá la lista`)
     fetchData()
   }
@@ -374,23 +383,41 @@ export default function CuentasPage() {
 
               {isExpanded && (
                 <div className="divide-y border-t">
-                  {/* Saldar todo el proveedor: UN medio de pago para todos los recibos */}
-                  {group.receipts.length > 1 && (
+                  {/* Saldar el proveedor: UN medio de pago, todo o hasta una fecha de compra */}
+                  {group.receipts.length > 1 && (() => {
+                    const hasta = groupPay?.key === group.key ? groupPay.hasta : ''
+                    const aSaldar = hasta ? group.receipts.filter((r) => r.received_date <= hasta) : group.receipts
+                    const montoASaldar = aSaldar.reduce((a, r) => a + (Number(r.cost_total) || 0), 0)
+                    return (
                     <div className="bg-[#faf8f5] px-4 py-2">
                       {groupPay?.key !== group.key ? (
                         <div className="flex justify-end">
                           <button
-                            onClick={() => setGroupPay({ key: group.key, method: null })}
+                            onClick={() => setGroupPay({ key: group.key, method: null, hasta: '' })}
                             disabled={payingAll === group.key}
                             className="flex items-center gap-1.5 rounded-lg bg-[#006d5a] px-3 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95 disabled:opacity-60"
                           >
-                            {payingAll === group.key ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-                            Saldar todo ({fmtMoney(group.total)})
+                            <Check className="size-3" />
+                            Saldar…
                           </button>
                         </div>
                       ) : (
                         <div>
-                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">¿Cómo se paga todo? ({fmtMoney(group.total)})</p>
+                          <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[#3d2c24]">
+                            <span className="font-semibold">Saldar</span>
+                            <button onClick={() => setGroupPay((p) => p ? { ...p, hasta: '' } : null)} className={cn('rounded-full px-2.5 py-1 font-semibold ring-1', !hasta ? 'bg-[#3d2c24] text-white ring-[#3d2c24]' : 'bg-white ring-[#ebe6df]')}>Todo</button>
+                            <span>o hasta la compra del</span>
+                            <input
+                              type="date"
+                              value={hasta}
+                              min={group.oldestDate}
+                              onChange={(e) => setGroupPay((p) => p ? { ...p, hasta: e.target.value } : null)}
+                              className={cn('rounded-lg border bg-white px-2 py-1 text-[12px]', hasta ? 'border-[#3d2c24]' : 'border-[#ebe6df]')}
+                            />
+                          </div>
+                          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#a39e97]">
+                            {aSaldar.length} recibo{aSaldar.length !== 1 ? 's' : ''} · {fmtMoney(montoASaldar)}{hasta ? ` (compras hasta el ${format(new Date(`${hasta}T12:00:00`), 'd MMM', { locale: es })})` : ''} · ¿Cómo se pagó?
+                          </p>
                           <div className="flex items-center gap-2">
                             {PAY_METHODS.map((m) => (
                               <button
@@ -408,16 +435,17 @@ export default function CuentasPage() {
                             ))}
                             <button
                               onClick={() => {
-                                if (groupPay?.method) void saldarTodo(group, groupPay.method)
+                                if (groupPay?.method && aSaldar.length > 0) void saldarTodo(group, aSaldar, groupPay.method)
                               }}
-                              disabled={!groupPay?.method || payingAll === group.key}
+                              disabled={!groupPay?.method || aSaldar.length === 0 || payingAll === group.key}
                               className="flex shrink-0 items-center gap-1 rounded-lg bg-[#3d2c24] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
                             >
                               {payingAll === group.key ? <Loader2 className="size-3 animate-spin" /> : <Check className="size-3" />}
-                              OK
+                              {payingAll === group.key && progreso ? `${progreso.hechos}/${progreso.total}` : 'OK'}
                             </button>
                             <button
                               onClick={() => setGroupPay(null)}
+                              disabled={payingAll === group.key}
                               className="flex shrink-0 items-center justify-center rounded-lg bg-[#f3efe9] p-1.5 text-[#a39e97]"
                             >
                               <X className="size-3.5" />
@@ -426,7 +454,8 @@ export default function CuentasPage() {
                         </div>
                       )}
                     </div>
-                  )}
+                    )
+                  })()}
                   {group.receipts.map((r) => {
                     const isPaying = payState?.id === r.id
                     return (
