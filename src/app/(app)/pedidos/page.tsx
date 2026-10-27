@@ -222,7 +222,8 @@ function PedidosContent() {
       .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, order_id, suppliers:supplier_id(name)')
       .eq('payment_status', 'a_pagar')
       .order('received_date', { ascending: false })
-      .limit(300)
+      // Todos los "a pagar" (con 300 los más viejos quedaban afuera del saldo)
+      .limit(5000)
     if (!error && data) {
       type RawReceipt = Omit<ReceiptRow, 'supplier_name' | 'fudo_expense_id'> & { suppliers: { name: string } | null; order_id: number | null }
       const rows = (data as unknown as RawReceipt[]).map((r) => ({
@@ -1069,6 +1070,12 @@ function PedidosContent() {
                 className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#006d5a] ring-1 ring-[#ebe6df] active:scale-[0.98]"
               >
                 <BarChart3 className="size-3.5" /> Historial
+              </Link>
+              <Link
+                href="/pedidos/cuentas"
+                className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#8b5e34] ring-1 ring-[#ebe6df] active:scale-[0.98]"
+              >
+                <Wallet className="size-3.5" /> Cuentas por pagar
               </Link>
               <a
                 href={`/api/stock/receipts/export?from=${new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10)}&to=${new Date().toISOString().slice(0, 10)}`}

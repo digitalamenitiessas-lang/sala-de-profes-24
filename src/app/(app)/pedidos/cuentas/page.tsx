@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
 import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
+import { ResumenPagar } from '../_components/ResumenPagar'
 
 type Receipt = {
   id: number
@@ -31,6 +32,7 @@ type Receipt = {
   payment_status: 'pagado' | 'a_pagar'
   paid_at: string | null
   payment_method: string | null
+  comprobante_numero?: string | null
   supplier_name: string
   supplier_phone: string | null
   supplier_contact: string | null
@@ -75,13 +77,17 @@ export default function CuentasPage() {
   const fetchData = useCallback(async () => {
     const { createClient } = await import('@/lib/supabase/client')
     const supabase = createClient()
-    const { data, error } = await supabase
-      .from('stock_receipts')
-      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)')
-      // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
-      // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
-      .order('received_date', { ascending: false })
-      .limit(300)
+    const campos = 'id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, comprobante_numero, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)'
+    // Los "a pagar" TODOS (antes salían de los últimos 300 recibos y los más
+    // viejos quedaban afuera del saldo); de los pagados, solo los recientes.
+    // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
+    // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
+    const [aPagar, pagados] = await Promise.all([
+      supabase.from('stock_receipts').select(campos).eq('payment_status', 'a_pagar').order('received_date', { ascending: false }).limit(5000),
+      supabase.from('stock_receipts').select(campos).eq('payment_status', 'pagado').order('paid_at', { ascending: false, nullsFirst: false }).limit(60),
+    ])
+    const error = aPagar.error ?? pagados.error
+    const data = [...(aPagar.data ?? []), ...(pagados.data ?? [])]
 
     if (error) {
       if (/payment_status|paid_at|payment_method/.test(error.message)) setMigrationMissing(true)
@@ -315,6 +321,12 @@ export default function CuentasPage() {
               </p>
             )}
           </div>
+        </FadeIn>
+      )}
+
+      {!migrationMissing && (pending.length > 0 || sinPrecio.length > 0) && (
+        <FadeIn delay={0.08}>
+          <ResumenPagar recibos={[...pending, ...sinPrecio]} />
         </FadeIn>
       )}
 
