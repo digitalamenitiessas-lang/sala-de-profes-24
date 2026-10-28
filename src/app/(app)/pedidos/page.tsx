@@ -1069,7 +1069,7 @@ function PedidosContent() {
                 href="/pedidos/gastos"
                 className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-[12px] font-semibold text-[#006d5a] ring-1 ring-[#ebe6df] active:scale-[0.98]"
               >
-                <BarChart3 className="size-3.5" /> Historial
+                <BarChart3 className="size-3.5" /> Historial y descargas
               </Link>
               <Link
                 href="/pedidos/cuentas"

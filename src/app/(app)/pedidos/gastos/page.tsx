@@ -9,7 +9,7 @@ import Link from 'next/link'
 import { format, subMonths, startOfMonth, endOfMonth, startOfWeek, subWeeks } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import {
-  ArrowLeft, BarChart3, Package, ChevronDown, ChevronUp, TrendingUp, Loader2,
+  ArrowLeft, BarChart3, Package, ChevronDown, ChevronUp, TrendingUp, Loader2, Download,
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { isManagerOrAbove } from '@/lib/roles'
@@ -89,7 +89,7 @@ export default function GastosPage() {
       .gte('received_date', from)
       .lte('received_date', to)
       .order('received_date', { ascending: false })
-      .limit(500)
+      .limit(5000)
 
     setReceipts(
       ((data ?? []) as unknown as (Omit<ReceiptRow, 'supplier_name'> & { suppliers: { name: string } | null })[])
@@ -154,6 +154,13 @@ export default function GastosPage() {
             </button>
           ))}
         </div>
+        <a
+          href={`/api/stock/receipts/export?from=${getPeriodDates(period).from}&to=${getPeriodDates(period).to}`}
+          download
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#006d5a] py-2.5 text-[13px] font-semibold text-white active:scale-[0.98]"
+        >
+          <Download className="size-4" /> Descargar Excel de {PERIODS.find((p) => p.key === period)?.label.toLowerCase()}
+        </a>
       </FadeIn>
 
       {/* Resumen del período */}
