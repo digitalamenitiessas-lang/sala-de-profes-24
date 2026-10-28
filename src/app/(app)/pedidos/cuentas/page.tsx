@@ -85,7 +85,7 @@ export default function CuentasPage() {
     // (van a "Falta el precio"); los pagados sin monto se descartan abajo.
     const [aPagar, pagados] = await Promise.all([
       supabase.from('stock_receipts').select(campos).eq('payment_status', 'a_pagar').order('received_date', { ascending: false }).limit(5000),
-      supabase.from('stock_receipts').select(campos).eq('payment_status', 'pagado').order('paid_at', { ascending: false, nullsFirst: false }).limit(60),
+      supabase.from('stock_receipts').select(campos).eq('payment_status', 'pagado').order('paid_at', { ascending: false, nullsFirst: false }).limit(200),
     ])
     const error = aPagar.error ?? pagados.error
     const data = [...(aPagar.data ?? []), ...(pagados.data ?? [])]
@@ -129,7 +129,24 @@ export default function CuentasPage() {
   const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && !faltaPrecio(r.cost_total)), [receipts])
   // Cuenta corriente que llegó sin monto: aparte, sin sumar al saldo en $
   const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total)), [receipts])
-  const paid = useMemo(() => receipts.filter((r) => r.payment_status === 'pagado' && r.cost_total != null).slice(0, 15), [receipts])
+  // Pagados recientes agrupados por pago (proveedor + día + medio): se paga el
+  // total de la factura, no producto por producto. El detalle, al abrir el pago.
+  const pagos = useMemo(() => {
+    const grupos = new Map<string, { key: string; proveedor: string; paidAt: string | null; medio: string | null; total: number; facturas: string[]; recibos: Receipt[] }>()
+    for (const r of receipts) {
+      if (r.payment_status !== 'pagado' || r.cost_total == null) continue
+      const dia = r.paid_at ? new Date(r.paid_at).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' }) : 'sin-fecha'
+      const key = `${r.supplier_id ?? r.supplier_name}|${dia}|${r.payment_method ?? ''}`
+      const g = grupos.get(key) ?? { key, proveedor: r.supplier_name, paidAt: r.paid_at, medio: r.payment_method, total: 0, facturas: [], recibos: [] }
+      g.total += Number(r.cost_total) || 0
+      if (r.comprobante_numero && !g.facturas.includes(r.comprobante_numero)) g.facturas.push(r.comprobante_numero)
+      g.recibos.push(r)
+      grupos.set(key, g)
+    }
+    return [...grupos.values()].slice(0, 15)
+  }, [receipts])
+  const [pagoAbierto, setPagoAbierto] = useState<string | null>(null)
+  const [deshaciendoPago, setDeshaciendoPago] = useState<string | null>(null)
   const totalPending = useMemo(() => pending.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0), [pending])
 
   const groups = useMemo(() => {
@@ -200,6 +217,26 @@ export default function CuentasPage() {
       toast.error(err instanceof Error ? err.message : 'Error al actualizar el pago')
     } finally {
       setUndoing(null)
+    }
+  }
+
+  /** Deshace un pago entero (todos sus recibos vuelven a "a pagar"). */
+  async function deshacerPago(g: (typeof pagos)[number]) {
+    if (!window.confirm(`¿Volver a "a pagar" el pago a ${g.proveedor} de ${fmtMoney(g.total)} (${g.recibos.length} recibo${g.recibos.length === 1 ? '' : 's'})?`)) return
+    setDeshaciendoPago(g.key)
+    let enFudo = false
+    try {
+      for (const r of g.recibos) {
+        const json = await patchStatus(r.id, 'a_pagar')
+        if (json.fudoPaymentLinked) enFudo = true
+      }
+      toast.success(`Volvió a "a pagar" — ${g.proveedor} (${fmtMoney(g.total)})`)
+      if (enFudo) toast.warning('Ojo: el pago ya imputado en Fudo no se revierte solo — corregilo en Fudo si hace falta')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al actualizar el pago')
+    } finally {
+      setDeshaciendoPago(null)
+      fetchData()
     }
   }
 
@@ -602,41 +639,69 @@ export default function CuentasPage() {
         </FadeIn>
       )}
 
-      {!migrationMissing && paid.length > 0 && (
+      {!migrationMissing && pagos.length > 0 && (
         <FadeIn>
           <button
             onClick={() => setShowPaid((v) => !v)}
             className="flex w-full items-center justify-center gap-1.5 py-1 text-[11px] font-semibold text-[#a39e97]"
           >
-            {showPaid ? 'Ocultar pagados recientes' : `Ver pagados recientes (${paid.length})`}
+            {showPaid ? 'Ocultar pagados recientes' : `Ver pagados recientes (${pagos.length} pago${pagos.length === 1 ? '' : 's'})`}
             {showPaid ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
           </button>
           {showPaid && (
             <div className="mt-2 overflow-hidden rounded-2xl bg-white ring-1 ring-[#ebe6df]">
               <div className="divide-y">
-                {paid.map((r) => (
-                  <div key={r.id} className={cn('flex items-center gap-3 px-4 py-2.5 opacity-70')}>
-                    <Check className="size-3.5 shrink-0 text-[#006d5a]" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium text-[#3d2c24]">{r.supplier_name} — {r.note ?? `${r.qty} ${r.unit ?? ''}`}</p>
-                      <p className="text-[10px] text-[#a39e97]">
-                        Pagado {r.paid_at ? format(new Date(r.paid_at), 'd MMM', { locale: es }) : ''}
-                        {r.payment_method ? ` · ${methodLabel(r.payment_method)}` : ''}
-                      </p>
+                {pagos.map((g) => {
+                  const abierto = pagoAbierto === g.key
+                  return (
+                    <div key={g.key}>
+                      <div className="flex items-center gap-3 px-4 py-2.5">
+                        <Check className="size-3.5 shrink-0 text-[#006d5a]" />
+                        <button type="button" onClick={() => setPagoAbierto(abierto ? null : g.key)} className="min-w-0 flex-1 text-left">
+                          <p className="truncate text-xs font-semibold text-[#3d2c24]">{g.proveedor}</p>
+                          <p className="text-[10px] text-[#a39e97]">
+                            Pagado {g.paidAt ? format(new Date(g.paidAt), 'd MMM', { locale: es }) : ''}
+                            {g.medio ? ` · ${methodLabel(g.medio)}` : ''}
+                            {g.facturas.length > 0 ? ` · Fact. ${g.facturas.join(', ')}` : ''}
+                            {` · ${g.recibos.length} ítem${g.recibos.length === 1 ? '' : 's'}`}
+                          </p>
+                        </button>
+                        <span className="shrink-0 text-xs font-bold tabular-nums text-[#006d5a]">{fmtMoney(g.total)}</span>
+                        <button type="button" onClick={() => setPagoAbierto(abierto ? null : g.key)} aria-label={abierto ? 'Ocultar detalle' : 'Ver detalle'} className="shrink-0 text-[#a39e97]">
+                          {abierto ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+                        </button>
+                      </div>
+                      {abierto && (
+                        <div className="bg-[#faf8f5] px-4 pb-2.5 pt-1">
+                          <div className="divide-y divide-[#f0ebe4]">
+                            {g.recibos.map((r) => (
+                              <div key={r.id} className="flex items-center gap-2 py-1.5 opacity-80">
+                                <p className="min-w-0 flex-1 truncate text-[11px] text-[#3d2c24]">{(r.note ?? `${r.qty} ${r.unit ?? ''}`).replace(/^Pedido:\s*/i, '')}</p>
+                                <span className="shrink-0 text-[11px] tabular-nums text-[#7d6c64]">{fmtMoney(Number(r.cost_total) || 0)}</span>
+                                <button
+                                  onClick={() => void deshacer(r)}
+                                  disabled={undoing === r.id}
+                                  title="Volver este ítem a a pagar (si lo marcaste por error)"
+                                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-[#a39e97] ring-1 ring-[#ebe6df] disabled:opacity-60"
+                                >
+                                  {undoing === r.id ? <Loader2 className="size-3 animate-spin" /> : 'Deshacer'}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void deshacerPago(g)}
+                            disabled={deshaciendoPago === g.key}
+                            className="mt-2 flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[10.5px] font-semibold text-[#7d6c64] ring-1 ring-[#ebe6df] active:scale-95 disabled:opacity-60"
+                          >
+                            {deshaciendoPago === g.key && <Loader2 className="size-3 animate-spin" />} Deshacer todo el pago
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <span className="shrink-0 text-xs font-semibold tabular-nums text-[#006d5a]">
-                      {fmtMoney(Number(r.cost_total) || 0)}
-                    </span>
-                    <button
-                      onClick={() => void deshacer(r)}
-                      disabled={undoing === r.id}
-                      title="Volver a a pagar (si lo marcaste por error)"
-                      className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold text-[#7d6c64] ring-1 ring-[#ebe6df] transition-all active:scale-95 disabled:opacity-60"
-                    >
-                      {undoing === r.id ? <Loader2 className="size-3 animate-spin" /> : 'Deshacer'}
-                    </button>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
