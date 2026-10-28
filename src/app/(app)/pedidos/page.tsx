@@ -1214,6 +1214,7 @@ function PedidosContent() {
           orders={llegoTodo.list}
           stockItems={stockItems}
           matchByOrder={matchByOrder}
+          gastosFudo={(conciliar?.expenses ?? []).filter((e) => !!e.providerId && e.providerId === llegoTodo.supplier?.fudo_provider_id)}
           onClose={() => setLlegoTodo(null)}
           onDone={() => { setLlegoTodo(null); void fetchOrders(); void fetchConciliar(); void fetchSugerencias(true) }}
         />

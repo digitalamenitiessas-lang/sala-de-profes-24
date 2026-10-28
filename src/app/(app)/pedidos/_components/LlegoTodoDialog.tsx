@@ -6,7 +6,7 @@ import { Check, Loader2, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogClose } from '@/components/ui/dialog'
 import { createClient } from '@/lib/supabase/client'
-import { PAYMENT_METHODS, esComprable, money, parseQty, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
+import { PAYMENT_METHODS, esComprable, money, parseQty, type ExpenseLite, type Match, type Order, type PaymentMethod, type StockLite, type Supplier } from './shared'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { DatosGastoFields, useDatosGasto } from './DatosGastoFields'
 import { FilaLlegoDeMas, nuevaFilaExtra, pedirPendientesFudo, traerDeFudo, type FilaExtra, type PendienteFudo } from './LlegoDeMas'
@@ -38,13 +38,15 @@ type FilaLlegada = {
   stockItemId: string | null
 }
 
-export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], orders, stockItems: stockDelPadre, matchByOrder, onClose, onDone }: {
+export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], orders, stockItems: stockDelPadre, matchByOrder, gastosFudo = [], onClose, onDone }: {
   supplier: Supplier | null
   /** Para elegir el proveedor en una compra sin pedido */
   suppliers?: Supplier[]
   orders: Order[]
   stockItems: StockLite[]
   matchByOrder: Map<string, Match>
+  /** Gastos de Fudo de este proveedor sin vincular: para "Ya está cargado en Fudo" */
+  gastosFudo?: ExpenseLite[]
   onClose: () => void
   onDone: () => void
 }) {
@@ -94,6 +96,9 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
       })
   }, [supplier?.id])
   const [nota, setNota] = useState('')
+  // "Ya está cargado en Fudo": se cierra con ese gasto, sin sumar stock ni crear otro
+  const [yaEnFudo, setYaEnFudo] = useState(false)
+  const [gastoElegido, setGastoElegido] = useState<string | null>(null)
   const [enviando, setEnviando] = useState(false)
   const [errores, setErrores] = useState<Record<number, string>>({})
 
@@ -193,6 +198,28 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
     }
   }
 
+  async function cerrarConFudo() {
+    if (!gastoElegido || llegan.length === 0) return
+    setEnviando(true)
+    try {
+      const res = await fetch('/api/kitchen/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'link_fudo_expense', expenseId: gastoElegido, items: llegan.map((f) => ({ orderId: f.order.id, source: f.order.source })) }),
+      })
+      const json = await res.json().catch(() => ({}))
+      const fallidos = ((json.resultados ?? []) as { orderId: number; ok: boolean; error?: string }[]).filter((r) => !r.ok)
+      if (json.cerrados > 0) toast.success(`${json.cerrados} producto${json.cerrados === 1 ? '' : 's'} cerrado${json.cerrados === 1 ? '' : 's'} con el gasto #${gastoElegido} de Fudo, sin sumar stock`)
+      if (fallidos.length > 0) toast.error(fallidos.map((r) => r.error ?? 'Error').join(' · '))
+      if (!res.ok && !json.cerrados) throw new Error(json.error ?? 'No se pudo cerrar')
+      if (json.cerrados > 0) onDone()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo cerrar')
+    } finally {
+      setEnviando(false)
+    }
+  }
+
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md rounded-2xl">
@@ -217,6 +244,36 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
           </div>
         </DialogHeader>
         <div className="max-h-[75vh] space-y-4 overflow-y-auto pr-0.5">
+          {/* La compra ya se cargó directo en Fudo: cerrar con ese gasto sin duplicar */}
+          {!sinPedido && gastosFudo.length > 0 && (
+            <div className="rounded-xl bg-[#eef4fc] px-3 py-2.5 text-[12px] text-[#2f5d8a] ring-1 ring-[#4a90d9]/25">
+              {!yaEnFudo ? (
+                <button type="button" onClick={() => setYaEnFudo(true)} className="text-left font-semibold underline underline-offset-2">
+                  ¿Ya lo cargaron directo en Fudo? Cerrarlo sin duplicar
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="font-semibold">Ya está cargado en Fudo</p>
+                  <p>Elegí el gasto: los productos tildados se cierran como recibidos con ese gasto. <b>No se suma stock ni se crea otro gasto</b> (Fudo ya lo hizo).</p>
+                  <div className="space-y-1">
+                    {gastosFudo.map((g) => (
+                      <label key={g.id} className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 ring-1 ring-[#4a90d9]/20">
+                        <input type="radio" name="gasto-fudo" checked={gastoElegido === g.id} onChange={() => setGastoElegido(g.id)} className="accent-[#2f5d8a]" />
+                        <span>Gasto #{g.id} · <b>{money(g.amount)}</b> · {new Date(g.date).toLocaleDateString('es-AR', { day: 'numeric', month: 'short', timeZone: 'America/Argentina/Buenos_Aires' })}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => void cerrarConFudo()} disabled={!gastoElegido || enviando || llegan.length === 0} className="flex items-center gap-1.5 rounded-lg bg-[#2f5d8a] px-3 py-1.5 font-semibold text-white disabled:opacity-50">
+                      {enviando && <Loader2 className="size-3.5 animate-spin" />} Cerrar {llegan.length} producto{llegan.length === 1 ? '' : 's'} con ese gasto
+                    </button>
+                    <button type="button" onClick={() => { setYaEnFudo(false); setGastoElegido(null) }} className="px-2 font-semibold text-[#7d6c64]">Volver</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Medio de pago — una sola vez para todo */}
           <div>
             <p className="mb-1.5 text-[12px] font-semibold text-[#3d2c24]">¿Cómo se paga? <span className="text-[#ea504c]">*</span></p>

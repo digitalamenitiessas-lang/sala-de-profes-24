@@ -29,7 +29,17 @@ export type FudoExpenseItem = {
   ingredientId: string
   name: string
   qty: number   // de attributes.quantity en Fudo
-  price: number // de attributes.price en Fudo (precio unitario)
+  /** attributes.price en Fudo: es el TOTAL de la línea, no el precio unitario (gasto 2240 de LVE) */
+  price: number
+}
+
+/** Renglón de un gasto con un PRODUCTO (pastelería, bebidas, descartables…) */
+export type FudoExpenseProductItem = {
+  productId: string
+  name: string
+  qty: number
+  /** Total de la línea (attributes.price de Fudo) */
+  price: number
 }
 
 export type FudoExpense = {
@@ -43,8 +53,10 @@ export type FudoExpense = {
   amount: number // Σ payments no cancelados
   ingredientNames: string[]
   itemCount: number // cantidad de expenseItems con ingredient
-  /** Items con cantidad y precio unitario (disponibles cuando Fudo los incluyó) */
+  /** Renglones con insumo: cantidad y total de la línea */
   items: FudoExpenseItem[]
+  /** Renglones con producto: cantidad y total de la línea */
+  productItems: FudoExpenseProductItem[]
 }
 
 type JsonApiRes = {
@@ -122,12 +134,14 @@ export async function fetchFudoExpensesConMeta(
   const payments = new Map<string, { amount: number; canceled: boolean; createdAt: string }>()
   const ingredientName = new Map<string, string>()
   const expenseItemIngredient = new Map<string, string | null>()
+  const expenseItemProduct = new Map<string, string | null>()
+  const productName = new Map<string, string>()
   const expenseItemDetail = new Map<string, { qty: number; price: number }>()
 
   try {
     for (let page = 1; page <= 20; page++) {
       const res = await fudoFetch<ExpensesResponse>(
-        `/expenses?include=payments,provider,expenseItems.ingredient&page[size]=${pageSize}&page[number]=${page}`,
+        `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
       rawExpenses.push(...data)
@@ -148,8 +162,12 @@ export async function fetchFudoExpensesConMeta(
           case 'Ingredient':
             if (typeof attrs.name === 'string') ingredientName.set(inc.id, attrs.name)
             break
+          case 'Product':
+            if (typeof attrs.name === 'string') productName.set(inc.id, attrs.name)
+            break
           case 'ExpenseItem':
             expenseItemIngredient.set(inc.id, relOne(inc.relationships, 'ingredient')?.id ?? null)
+            expenseItemProduct.set(inc.id, relOne(inc.relationships, 'product')?.id ?? null)
             expenseItemDetail.set(inc.id, {
               qty: Number(attrs.quantity ?? 0) || 0,
               price: Number(attrs.price ?? 0) || 0,
@@ -187,8 +205,15 @@ export async function fetchFudoExpensesConMeta(
     const names: string[] = []
     const ingredientIds: string[] = []
     const items: FudoExpenseItem[] = []
+    const productItems: FudoExpenseProductItem[] = []
     for (const it of itemRefs) {
       const ingId = expenseItemIngredient.get(it.id)
+      const prodId = expenseItemProduct.get(it.id)
+      if (!ingId && prodId) {
+        const detail = expenseItemDetail.get(it.id) ?? { qty: 0, price: 0 }
+        productItems.push({ productId: prodId, name: productName.get(prodId) ?? prodId, qty: detail.qty, price: detail.price })
+        continue
+      }
       if (!ingId) continue
       ingredientIds.push(ingId)
       const name = ingredientName.get(ingId) ?? ingId
@@ -208,6 +233,7 @@ export async function fetchFudoExpensesConMeta(
       ingredientNames: names,
       itemCount: items.length,
       items,
+      productItems,
     })
   }
 
@@ -393,6 +419,45 @@ export async function postFudoPayment(params: { expenseId: string; amount: numbe
 export async function fudoExpensePagado(expenseId: string): Promise<boolean> {
   const res = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=status`)
   return res?.data?.attributes?.status === 'PAID'
+}
+
+/**
+ * Un gasto de Fudo con sus renglones, para cerrar en la app una compra que se
+ * cargó directo en Fudo ("Ya está cargado en Fudo"). total = total de la línea.
+ * medio = medio de Sala de Profes del gasto (null si es cuenta corriente).
+ */
+export async function leerGastoFudo(expenseId: string): Promise<{
+  id: string; providerId: string | null; amount: number; pagado: boolean; anulado: boolean; fecha: string
+  medio: string | null
+  lineas: { ingredientId: string | null; productId: string | null; qty: number; total: number }[]
+} | null> {
+  if (!/^\d{1,10}$/.test(expenseId)) return null
+  const res = await fudoFetch<{ data?: JsonApiRes; included?: JsonApiRes[] }>(
+    `/expenses/${expenseId}?fields[expense]=amount,status,canceled,createdAt,provider,paymentMethod,expenseItems`
+    + '&fields[expenseItem]=price,quantity,ingredient,product&include=expenseItems',
+  )
+  const d = res?.data
+  if (!d) return null
+  const a = d.attributes ?? {}
+  const lineas = (res.included ?? []).filter((x) => x.type === 'ExpenseItem').map((x) => ({
+    ingredientId: relOne(x.relationships, 'ingredient')?.id ?? null,
+    productId: relOne(x.relationships, 'product')?.id ?? null,
+    qty: Number(x.attributes?.quantity ?? 0) || 0,
+    total: Number(x.attributes?.price ?? 0) || 0,
+  }))
+  const medioFudo = relOne(d.relationships, 'paymentMethod')?.id ?? null
+  // Llena el cache de medios (ids de este Fudo) antes de traducir
+  try { await fudoPaymentMethodId('efectivo') } catch { /* sin medios: queda null */ }
+  return {
+    id: d.id,
+    providerId: relOne(d.relationships, 'provider')?.id ?? null,
+    amount: Number(a.amount ?? 0) || 0,
+    pagado: a.status === 'PAID',
+    anulado: a.canceled === true,
+    fecha: String(a.createdAt ?? new Date().toISOString()),
+    medio: medioFudo ? await medioLveDesdeFudo(medioFudo) : null,
+    lineas,
+  }
 }
 
 /** Cuerpo del POST /expenses: proveedor + categoría + comprobante + medio de pago. */

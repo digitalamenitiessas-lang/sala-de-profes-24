@@ -689,6 +689,105 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: okCount > 0 || noVinoOk > 0, resultados, recibidos: okCount, fallidos: llegan.length - okCount, resto, noVinieron: noVinoOk, agregados: agregados.length })
     }
 
+    // ----- YA ESTÁ CARGADO EN FUDO: cerrar pedidos con un gasto cargado directo en Fudo -----
+    // Fudo ya sumó el stock (gasto con productos/insumos) y registró el pago o la
+    // deuda: acá NO se toca el stock ni Fudo (si se tocaba "Llegó" quedaba doble).
+    // Cada pedido se cierra vinculado al gasto y queda su recibo para el historial
+    // con la cantidad y el total de su renglón en Fudo (si el gasto lo tiene).
+    if (body.action === 'link_fudo_expense') {
+      const { expenseId, items } = body as { expenseId?: unknown; items?: { orderId: number; source: 'cocina' | 'barra' }[] }
+      const { data: profile } = await admin.from('profiles').select('role').eq('id', user.id).single()
+      if (!profile || (profile.role !== 'encargado' && profile.role !== 'socio')) {
+        return NextResponse.json({ success: false, error: 'Solo encargados y socios pueden confirmar recepciones' }, { status: 403 })
+      }
+      const idGasto = typeof expenseId === 'string' || typeof expenseId === 'number' ? String(expenseId) : ''
+      if (!/^\d{1,10}$/.test(idGasto)) return NextResponse.json({ success: false, error: 'Elegí el gasto de Fudo' }, { status: 400 })
+      if (!Array.isArray(items) || items.length === 0 || items.length > 60) return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
+
+      // El mismo gasto no se vincula dos veces (recibos o pedidos)
+      const [{ count: enRecibos }, { count: enCocina }, { count: enBarra }] = await Promise.all([
+        admin.from('stock_receipts').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
+        admin.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
+        admin.from('bar_orders').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
+      ])
+      if ((enRecibos ?? 0) + (enCocina ?? 0) + (enBarra ?? 0) > 0) {
+        return NextResponse.json({ success: false, error: `El gasto #${idGasto} ya está vinculado en la app` }, { status: 409 })
+      }
+      const { leerGastoFudo } = await import('@/lib/fudo/expenses')
+      const g = await leerGastoFudo(idGasto)
+      if (!g) return NextResponse.json({ success: false, error: `No encontré el gasto #${idGasto} en Fudo` }, { status: 404 })
+      if (g.anulado) return NextResponse.json({ success: false, error: `El gasto #${idGasto} está anulado en Fudo` }, { status: 409 })
+      const { data: provGasto } = g.providerId
+        ? await admin.from('suppliers').select('id').eq('fudo_provider_id', g.providerId).maybeSingle()
+        : { data: null }
+      const proveedorGasto = (provGasto as { id: string } | null)?.id ?? null
+
+      const fechaAR = new Date(g.fecha).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
+      const pagado = g.pagado
+      const resultados: { orderId: number; ok: boolean; error?: string; conImporte?: boolean }[] = []
+      for (const it of items) {
+        const tabla = it.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+        const { data: o } = await admin.from(tabla).select('id, product_name, quantity, status, stock_item_id, supplier_id').eq('id', it.orderId).maybeSingle()
+        const order = o as { id: number; product_name: string; quantity: string; status: string; stock_item_id: string | null; supplier_id: string | null } | null
+        if (!order) { resultados.push({ orderId: it.orderId, ok: false, error: 'Pedido no encontrado' }); continue }
+        if (order.status === 'received') { resultados.push({ orderId: it.orderId, ok: false, error: 'Ya estaba recibido' }); continue }
+        if (order.supplier_id && proveedorGasto && order.supplier_id !== proveedorGasto) {
+          resultados.push({ orderId: it.orderId, ok: false, error: 'El gasto de Fudo es de otro proveedor' }); continue
+        }
+        const { data: siData } = order.stock_item_id
+          ? await admin.from('stock_items').select('id, unit, fudo_ingredient_id, fudo_product_id').eq('id', order.stock_item_id).maybeSingle()
+          : { data: null }
+        const si = siData as { id: string; unit: string; fudo_ingredient_id: string | null; fudo_product_id: string | null } | null
+        const linea = si ? g.lineas.find((l) => (si.fudo_ingredient_id && l.ingredientId === si.fudo_ingredient_id) || (si.fudo_product_id && l.productId === si.fudo_product_id)) : undefined
+        const qtyPedido = parseFloat(fraccionADecimal(String(order.quantity ?? '')).replace(',', '.'))
+        const qty = linea && linea.qty > 0 ? linea.qty : (Number.isFinite(qtyPedido) && qtyPedido > 0 ? qtyPedido : 1)
+        const total = linea && linea.total > 0 ? Math.round(linea.total * 100) / 100 : null
+        const ahoraIso = new Date().toISOString()
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: recErr } = await (admin.from('stock_receipts') as any).insert({
+          stock_item_id: order.stock_item_id,
+          supplier_id: order.supplier_id ?? proveedorGasto,
+          order_source: it.source,
+          order_id: order.id,
+          qty,
+          unit: si?.unit ?? null,
+          cost_total: total,
+          cost_per_unit: total != null ? Math.round((total / qty) * 10000) / 10000 : null,
+          note: `Pedido: ${order.product_name} (${order.quantity}) — cargado directo en Fudo (gasto #${idGasto})`,
+          received_by: user.id,
+          received_date: fechaAR,
+          received_at: g.fecha,
+          payment_status: pagado ? 'pagado' : 'a_pagar',
+          paid_at: pagado ? g.fecha : null,
+          paid_by: pagado ? user.id : null,
+          payment_method: pagado ? g.medio : 'cuenta_corriente',
+          fudo_expense_id: idGasto,
+        })
+        if (recErr) { resultados.push({ orderId: it.orderId, ok: false, error: recErr.message }); continue }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: upErr } = await (admin.from(tabla) as any).update({
+          status: 'received', received_qty: qty, received_at: ahoraIso, received_by: user.id,
+          received_mode: 'fudo_expense', fudo_expense_id: idGasto, fudo_amount: total,
+          received_note: `Cargado directo en Fudo (gasto #${idGasto}): sin sumar stock acá`, updated_at: ahoraIso,
+        }).eq('id', order.id)
+        if (upErr) { resultados.push({ orderId: it.orderId, ok: false, error: upErr.message }); continue }
+        resultados.push({ orderId: it.orderId, ok: true, conImporte: total != null })
+      }
+      const cerrados = resultados.filter((r) => r.ok).length
+      if (cerrados > 0) {
+        // Fudo ya sumó el stock: que el pulso vuelva a leerlo ya
+        const { actualizarSalud } = await import('@/lib/fudo/salud')
+        await actualizarSalud(admin, { ultima_lectura_stock_at: null }).catch(() => {})
+        void logAudit(admin, {
+          userId: user.id, userName: null, action: 'confirm_arrival_fudo', module: 'pedidos', entityType: 'kitchen_order',
+          description: `${cerrados} producto${cerrados === 1 ? '' : 's'} cerrado${cerrados === 1 ? '' : 's'} con el gasto #${idGasto} cargado directo en Fudo (sin sumar stock en la app)`,
+          metadata: { expenseId: idGasto, resultados, monto: g.amount, pagado },
+        })
+      }
+      return NextResponse.json({ success: cerrados > 0, cerrados, resultados, monto: g.amount })
+    }
+
     // ----- NO VINO: UN producto del pedido no llegó (cocina o barra) -----
     // Marca SOLO ese producto: no suma stock, no genera recibo ni gasto en
     // Fudo. El resto del pedido sigue en camino. Antes "No vino" usaba el
