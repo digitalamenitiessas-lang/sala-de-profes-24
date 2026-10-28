@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // Usada por:
 //   - POST/GET /api/stock/create-from-fudo (botón manual, manager-only)
-//   - GET /api/cron/fudo-sync (auto-creación nocturna de insumos nuevos)
+//   - GET /api/cron/fudo-sync (auto-creación nocturna de insumos y productos nuevos)
 // Fudo es la fuente de verdad: unidad real (include=unit), costo y stock
 // inicial vienen de Fudo. Idempotente: si ya hay un stock_item vinculado a ese
 // fudo_ingredient_id, se saltea.
@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fudoHttp } from '@/lib/fudoClient'
 import { readFudoStock, type FudoIngredient } from '@/lib/fudo/stock-sync'
 import { esErrorColumnaFaltante } from '@/lib/costos/confiable'
+import { mapFudoProductCategory } from '@/lib/stock/areas'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -187,6 +188,74 @@ export async function autoCreateMissingFudoIngredients(
   )
 
   return createStockItemsFromIngredients(admin, candidates, linkedIngredients)
+}
+
+// ---------------------------------------------------------------------------
+// Productos de Fudo (pastelería, bebidas, descartables…) — nocturno
+// ---------------------------------------------------------------------------
+// Los insumos nuevos llegaban solos; los PRODUCTOS solo con "Crear todos" en
+// Control. Un producto que se cargaba (o se le cargaba stock) después en Fudo
+// no estaba en la app y no se podía pedir ni recibir (Bruno Rossi 28/10:
+// Galleta LVE, Cookie con chips, Budín de banana). Mismo criterio que "Crear
+// todos": control de stock + stock cargado (los platos del menú no tienen
+// stock cargado), activo y sin vincular. Área según la categoría de Fudo.
+
+type FudoProductoConStock = { id: string; name: string; cost: number | null; stock: number; categoria: string | null }
+
+async function readFudoProductsConStock(): Promise<FudoProductoConStock[]> {
+  const out: FudoProductoConStock[] = []
+  for (let page = 1; page <= 20; page++) {
+    const res = await fudoHttp(`https://api.fu.do/v1alpha1/products?include=productCategory&page[size]=500&page[number]=${page}`)
+    if (!res.ok) throw new Error(`Fudo products ${res.status}`)
+    const json = await res.json() as {
+      data?: { id: string; attributes?: Record<string, unknown>; relationships?: { productCategory?: { data?: { id: string } | null } } }[]
+      included?: { type: string; id: string; attributes?: { name?: string } }[]
+    }
+    const categorias = new Map((json.included ?? []).filter((x) => x.type === 'ProductCategory').map((x) => [x.id, x.attributes?.name ?? null]))
+    const data = json.data ?? []
+    for (const p of data) {
+      const a = p.attributes ?? {}
+      const stock = asNullableNumber(a.stock)
+      if (a.stockControl !== true || stock == null || a.active === false) continue
+      const catId = p.relationships?.productCategory?.data?.id
+      out.push({ id: String(p.id), name: String(a.name ?? `Producto ${p.id}`), cost: asNullableNumber(a.cost), stock, categoria: catId ? categorias.get(catId) ?? null : null })
+    }
+    if (data.length < 500) break
+  }
+  return out
+}
+
+export async function autoCreateMissingFudoProducts(admin: SupabaseClient): Promise<CreateFromFudoResult> {
+  const [productos, { linkedProducts }] = await Promise.all([readFudoProductsConStock(), readLinkedFudoIds(admin)])
+  const result: CreateFromFudoResult = { created: 0, skipped: 0, createdNames: [], errors: [] }
+  const now = new Date().toISOString()
+  for (const prod of productos) {
+    if (linkedProducts.has(prod.id)) { result.skipped++; continue }
+    const m = mapFudoProductCategory(prod.categoria)
+    const hasCost = prod.cost != null && prod.cost > 0
+    const basePayload = {
+      name: prod.name,
+      unit: 'unidad',
+      cost_per_unit: hasCost ? prod.cost : null,
+      current_qty: Math.round(prod.stock * 100) / 100,
+      fudo_product_id: prod.id,
+      fudo_category: prod.categoria,
+      category: m.category ?? 'otros',
+      area: m.area,
+      is_active: true,
+      semaphore: 'green',
+      updated_at: now,
+    }
+    let { error } = await admin.from('stock_items').insert(
+      hasCost ? { ...basePayload, cost_source: 'fudo', cost_updated_at: now } : basePayload,
+    )
+    if (error && hasCost && esErrorColumnaFaltante(error.message, ['cost_source', 'cost_updated_at'])) {
+      ;({ error } = await admin.from('stock_items').insert(basePayload))
+    }
+    if (error) result.errors.push(`${prod.name}: ${error.message}`)
+    else { result.created++; result.createdNames.push(prod.name); linkedProducts.add(prod.id) }
+  }
+  return result
 }
 
 // ---------------------------------------------------------------------------

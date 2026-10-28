@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { importFudoSales } from '@/lib/fudo/sales-sync'
-import { autoCreateMissingFudoIngredients, type CreateFromFudoResult } from '@/lib/fudo/create-from-fudo'
+import { autoCreateMissingFudoIngredients, autoCreateMissingFudoProducts, type CreateFromFudoResult } from '@/lib/fudo/create-from-fudo'
 import { notifyEvent } from '@/lib/push/notify-event'
 
 // ---------------------------------------------------------------------------
@@ -78,12 +78,21 @@ export async function GET(request: NextRequest) {
     let autoCreateError: string | null = null
     try {
       autoCreate = await autoCreateMissingFudoIngredients(admin)
+      // Productos con control de stock y stock cargado (pastelería, bebidas,
+      // descartables): mismo criterio que "Crear todos" de Control
+      const productos = await autoCreateMissingFudoProducts(admin)
+      autoCreate = {
+        created: autoCreate.created + productos.created,
+        skipped: autoCreate.skipped + productos.skipped,
+        createdNames: [...autoCreate.createdNames, ...productos.createdNames],
+        errors: [...autoCreate.errors, ...productos.errors],
+      }
       if (autoCreate.created > 0) {
         const names = autoCreate.createdNames
         const shown = names.slice(0, 8).join(', ')
         const extra = names.length > 8 ? ` y ${names.length - 8} más` : ''
         await notifyEvent(admin, 'stock_adjusted', {
-          title: `🆕 ${autoCreate.created} insumo${autoCreate.created === 1 ? ' nuevo' : 's nuevos'} de Fudo creado${autoCreate.created === 1 ? '' : 's'} en la app`,
+          title: `🆕 ${autoCreate.created} insumo${autoCreate.created === 1 ? '/producto nuevo' : 's/productos nuevos'} de Fudo creado${autoCreate.created === 1 ? '' : 's'} en la app`,
           body: `${shown}${extra}. Revisá categoría y proveedor.`,
           url: '/stock',
         }).catch(() => {})
