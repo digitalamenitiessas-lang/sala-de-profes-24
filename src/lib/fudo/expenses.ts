@@ -388,6 +388,10 @@ export async function medioLveDesdeFudo(fudoId: string): Promise<string | null> 
 
 /** Imputa un pago a un gasto de Fudo con su medio real. */
 export async function postFudoPayment(params: { expenseId: string; amount: number; medio: string | null | undefined }) {
+  // Un gasto creado con medio de pago (efectivo, transferencia…) Fudo ya lo
+  // registra PAGADO al crearlo: imputar otro pago daba 422 "El pago supera el
+  // remanente" y quedaba un reintento inútil (Alem 500, gasto #202, 28/10).
+  if (await fudoExpensePagado(params.expenseId).catch(() => false)) return null
   // Un pago no puede ser "cuenta corriente" (eso es deber): sin medio real, efectivo
   const medio = params.medio === 'cuenta_corriente' ? 'efectivo' : params.medio
   const medioId = await fudoPaymentMethodId(medio)
