@@ -145,9 +145,9 @@ export function FilaLlegoDeMas({ fila, sinIva = false, comprables, stockById, fu
   )
 }
 
-/** Lista de Fudo de lo que todavía no está en stock (ingredientes y productos con stock) */
+/** Lista de Fudo de lo que todavía no está en stock (insumos y productos con control de stock, aunque no tengan stock cargado) */
 export async function pedirPendientesFudo(): Promise<PendienteFudo[]> {
-  const r = await fetch('/api/stock/create-from-fudo')
+  const r = await fetch('/api/stock/create-from-fudo?sin_stock=1')
   const j = await r.json().catch(() => null)
   if (!r.ok || !j) throw new Error(j?.error ?? 'No se pudo consultar Fudo')
   return [

@@ -42,11 +42,16 @@ function asNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** Productos Fudo con control de stock (terminados, ej. empanadas) */
-async function readFudoProductsWithStock(): Promise<UnmappedProduct[]> {
+/**
+ * Productos Fudo con control de stock (terminados, ej. empanadas). Por defecto
+ * solo los que tienen stock cargado ("Crear todos" no trae platos del menú).
+ * sinStock: también los que nunca tuvieron stock cargado (Schweppes 29/10),
+ * para traer UNO elegido a mano desde Compras ("está en Fudo · traer a stock").
+ */
+async function readFudoProductsWithStock(opts: { sinStock?: boolean } = {}): Promise<UnmappedProduct[]> {
   const products = await fudo.getProducts()
   return products
-    .filter(p => p.stockControl && p.stock != null)
+    .filter(p => p.stockControl && p.active !== false && (opts.sinStock || p.stock != null))
     .map(p => ({
       id: String(p.id),
       name: p.name,
@@ -78,15 +83,17 @@ async function requireManager() {
 // GET — lista de ingredientes/productos Fudo sin item en LVE
 // ---------------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const auth = await requireManager()
     if ('error' in auth) return auth.error
 
+    // ?sin_stock=1 (buscador de Compras): también productos sin stock cargado en Fudo
+    const sinStock = request.nextUrl.searchParams.get('sin_stock') === '1'
     const admin = createAdminClient()
     const [ingredients, products, { linkedIngredients, linkedProducts }] = await Promise.all([
       readFudoIngredientsWithUnit(),
-      readFudoProductsWithStock(),
+      readFudoProductsWithStock({ sinStock }),
       readLinkedFudoIds(admin),
     ])
 
@@ -144,7 +151,8 @@ export async function POST(request: NextRequest) {
 
     const [ingredients, products, { linkedIngredients, linkedProducts }] = await Promise.all([
       needIngredients ? readFudoIngredientsWithUnit() : Promise.resolve([]),
-      needProducts ? readFudoProductsWithStock() : Promise.resolve([]),
+      // Uno elegido a mano: también sin stock cargado; "Crear todos", solo con stock
+      needProducts ? readFudoProductsWithStock({ sinStock: !all }) : Promise.resolve([]),
       readLinkedFudoIds(admin),
     ])
 
