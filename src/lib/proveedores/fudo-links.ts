@@ -21,12 +21,17 @@ import { fetchFudoExpenses, type FudoExpense } from '@/lib/fudo/expenses'
 
 export type Evidence = { purchases: number; lastAt: string }
 
-/** "ingrediente|proveedor" (ids de Fudo) → evidencia */
+/**
+ * "ingrediente|proveedor" y "p:producto|proveedor" (ids de Fudo) → evidencia.
+ * Los productos (bebidas, descartables, pastelería) también: sin proveedor no
+ * aparecían para pedir (Coca-Cola / Salta Refresco, Bruno Rossi, 28-29/10).
+ */
 export function purchaseEvidence(expenses: FudoExpense[]): Map<string, Evidence> {
   const map = new Map<string, Evidence>()
   for (const e of expenses) {
     if (!e.providerId) continue
-    for (const ing of new Set(e.ingredientIds)) {
+    const comprados = [...new Set(e.ingredientIds), ...new Set((e.productItems ?? []).map((p) => `p:${p.productId}`))]
+    for (const ing of comprados) {
       const key = `${ing}|${e.providerId}`
       const prev = map.get(key)
       if (!prev) map.set(key, { purchases: 1, lastAt: e.date })
@@ -111,7 +116,7 @@ export async function syncSupplierLinksFromFudo(
   const evidence = purchaseEvidence(expenses)
 
   const [itemsRes, suppliersRes, linksRes] = await Promise.all([
-    admin.from('stock_items').select('id, fudo_ingredient_id').eq('is_active', true).not('fudo_ingredient_id', 'is', null),
+    admin.from('stock_items').select('id, fudo_ingredient_id, fudo_product_id').eq('is_active', true).or('fudo_ingredient_id.not.is.null,fudo_product_id.not.is.null'),
     admin.from('suppliers').select('id, fudo_provider_id').eq('is_active', true).not('fudo_provider_id', 'is', null),
     admin.from('stock_item_suppliers').select('stock_item_id, supplier_id, is_primary, fudo_purchases, last_purchase_at, dismissed_at'),
   ])
@@ -119,8 +124,12 @@ export async function syncSupplierLinksFromFudo(
   if (suppliersRes.error) throw new Error(suppliersRes.error.message)
   if (linksRes.error) throw new Error(linksRes.error.message)
 
+  // Insumos por id de Fudo; productos con prefijo "p:" (mismo formato que purchaseEvidence)
   const itemByIng = new Map<string, string>()
-  for (const it of itemsRes.data ?? []) itemByIng.set(String(it.fudo_ingredient_id), it.id)
+  for (const it of (itemsRes.data ?? []) as { id: string; fudo_ingredient_id: string | null; fudo_product_id: string | null }[]) {
+    if (it.fudo_ingredient_id) itemByIng.set(String(it.fudo_ingredient_id), it.id)
+    if (it.fudo_product_id) itemByIng.set(`p:${it.fudo_product_id}`, it.id)
+  }
   const supplierByProv = new Map<string, string>()
   for (const s of suppliersRes.data ?? []) supplierByProv.set(String(s.fudo_provider_id), s.id)
 
