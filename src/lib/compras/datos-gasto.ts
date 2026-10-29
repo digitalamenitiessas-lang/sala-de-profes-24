@@ -2,12 +2,11 @@
 // Datos del gasto que se cargan al confirmar una compra ("Llegó" / "Llegó
 // todo"): la categoría (con eso se hace el análisis de fin de mes) y el
 // comprobante. Va a Fudo (categoría, tipo y número de comprobante) y queda en
-// stock_receipts. IVA e IIBB (Factura A) se suman al gasto de Fudo para que
-// quede el total a pagar, detallados en la descripción (la API de Fudo no deja
-// cargarlos como impuestos del gasto), y quedan en un recibo "Impuestos de la
-// factura": la suma de los recibos de una factura = el gasto de Fudo. El costo
-// de los productos queda sin IVA. Sin imports de servidor: lo usan los
-// diálogos y la API.
+// stock_receipts. La Factura A ya no: desde el 29/10/2026 la carga
+// administración en Fudo (esFacturaEnFudo). Antes su IVA e IIBB se sumaban al
+// gasto de Fudo, detallados en la descripción, y quedaban en un recibo
+// "Impuestos de la factura" (NOTA_IMPUESTOS, sigue en los recibos viejos).
+// Sin imports de servidor: lo usan los diálogos y la API.
 // ---------------------------------------------------------------------------
 
 /** Nota del recibo con el IVA/IIBB de una factura (sin producto: no es costo de insumos) */
@@ -44,6 +43,13 @@ export type DatosGasto = {
 export type CategoriaGasto = { id: string; name: string; grupo: string | null }
 
 export const esFactura = (c: ComprobanteTipo | null | undefined) => c === 'factura_a' || c === 'factura_b' || c === 'factura_c'
+
+/**
+ * Factura A: la carga administración en Fudo, con IVA e IIBB como impuestos
+ * (la API de Fudo no deja cargarlos). La app no crea el gasto: ver
+ * lib/compras/factura-en-fudo.
+ */
+export const esFacturaEnFudo = (gasto: Pick<DatosGasto, 'comprobante'> | null | undefined) => gasto?.comprobante === 'factura_a'
 
 const monto = (v: unknown) => {
   if (v == null || v === '') return null

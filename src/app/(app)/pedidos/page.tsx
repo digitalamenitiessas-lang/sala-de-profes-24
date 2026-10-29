@@ -25,6 +25,7 @@ import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugeren
 import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
+import { FacturasPendientes } from './_components/FacturasPendientes'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { coincideBusqueda } from '@/lib/buscar'
 import { SinPrecioSection, faltaPrecio } from './_components/SinPrecio'
@@ -262,12 +263,15 @@ function PedidosContent() {
   }, [fetchConciliar])
 
   useEffect(() => { void fetchOrders(); void fetchSugerencias() }, [fetchOrders, fetchSugerencias])
-  useEffect(() => { if (step === 'camino') void fetchConciliar() }, [step, fetchConciliar])
+  // En Recibidos, para vincular a mano las facturas pendientes de cargar en Fudo
+  useEffect(() => { if (step === 'camino' || step === 'recibido') void fetchConciliar() }, [step, fetchConciliar])
   useEffect(() => { if (step === 'pagos') void fetchReceipts() }, [step, fetchReceipts])
 
   const pending = useMemo(() => orders.filter((o) => o.status === 'pending'), [orders])
   const ordered = useMemo(() => orders.filter((o) => o.status === 'ordered'), [orders])
   const received = useMemo(() => orders.filter((o) => o.status === 'received').sort((a, b) => (b.received_at ?? '').localeCompare(a.received_at ?? '')), [orders])
+  // Llegaron con Factura A y falta que administración la cargue en Fudo
+  const conFacturaPendiente = useMemo(() => received.filter((o) => o.received_mode === 'factura_pendiente'), [received])
 
   const profileName = (id: string | null) => {
     if (!id) return 'Sistema'
@@ -936,6 +940,14 @@ function PedidosContent() {
       {/* ═══════════ PASO 3 — RECIBIDOS ═══════════ */}
       {step === 'recibido' && (
         <FadeIn>
+          {canManage && (
+            <FacturasPendientes
+              pedidos={conFacturaPendiente}
+              suppliers={suppliers}
+              gastosFudo={conciliar?.expenses ?? []}
+              onDone={() => { void fetchOrders(); void fetchConciliar() }}
+            />
+          )}
           {canManage && porPagar !== null && (porPagar > 0 || sinPrecioCount > 0) && (
             <button
               onClick={() => setStep('pagos')}
@@ -966,6 +978,7 @@ function PedidosContent() {
                       {o.received_mode === 'fudo_expense' && <span className="ml-1 rounded-full bg-[#e8f5f1] px-1.5 py-0.5 text-[10px] font-bold text-[#006d5a]">Fudo{o.fudo_amount ? ` ${money(o.fudo_amount)}` : ''}</span>}
                       {o.received_mode === 'lve_stock' && <span className="ml-1 rounded-full bg-[#eef4fc] px-1.5 py-0.5 text-[10px] font-bold text-[#4a90d9]">stock LVE{o.received_qty ? ` ${o.received_qty}` : ''}</span>}
                       {o.received_mode === 'sin_stock' && <span className="ml-1 rounded-full bg-[#f3efe9] px-1.5 py-0.5 text-[10px] font-bold text-[#7d6c64]">sin stock</span>}
+                      {o.received_mode === 'factura_pendiente' && <span className="ml-1 rounded-full bg-[#eef4fc] px-1.5 py-0.5 text-[10px] font-bold text-[#2f5d8a]">falta la factura en Fudo</span>}
                       {o.payment_method && (
                         <span className={cn('ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold',
                           o.payment_method === 'cuenta_corriente' ? 'bg-[#fdf6ec] text-[#d4943a]' : 'bg-[#f3efe9] text-[#7d6c64]')}>
@@ -1368,10 +1381,6 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   }
   const typedUnit = parseTypedUnit(receivedQty)
   const qtyNormalized = normalizedQtyFrom(receivedQty)
-  // Importe sin IVA de esta carga, para el "Total a pagar" de la Factura A
-  const netoCarga = mode === 'sin_stock'
-    ? montoSinStock
-    : parseQty(totalCost) > 0 ? parseQty(totalCost) : parseQty(unitCost) * (qtyNormalized ?? 0)
   // Unidad tipeada NO convertible a la del insumo → no autocalcular, avisar
   const qtyUnitIncompatible = Boolean(
     selectedStock && typedUnit && Number.isFinite(qtyNum) && qtyNum > 0 && qtyNormalized == null,
@@ -1459,14 +1468,17 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
 
   // Categoría del gasto: obligatoria cuando la llegada genera un gasto (hay monto)
   const datosGasto = useDatosGasto(supplier?.id)
+  // Factura A: la carga administración en Fudo; acá solo queda que llegó (sin
+  // pago, precio ni stock: entra con la factura)
+  const facturaEnFudo = datosGasto.facturaEnFudo
   const hayMonto = mode === 'sin_stock'
     ? Number.isFinite(montoSinStock) && montoSinStock > 0
     : [parseQty(unitCost), parseQty(totalCost)].some((n) => Number.isFinite(n) && n > 0)
-  const canConfirm = !!paymentMethod && !(hayMonto && datosGasto.falta)
+  const canConfirm = (facturaEnFudo ? !datosGasto.falta : !!paymentMethod && !(hayMonto && datosGasto.falta))
     && (mode === 'sin_stock' || (mode === 'lve_stock' && !!stockItemId && !!receivedQty.trim()))
 
   async function confirm() {
-    if (!paymentMethod) return
+    if (!paymentMethod && !facturaEnFudo) return
     setSubmitting(true)
     try {
       // Cada modo manda SOLO sus campos: el monto de sin_stock viaja como
@@ -1496,12 +1508,16 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
       })
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'No se pudo confirmar')
-      if (mode === 'lve_stock') {
+      if (json.vinculadoA) {
+        toast.success(`Llegó — la factura ya estaba en Fudo (gasto #${json.vinculadoA}): quedó vinculada`)
+      } else if (json.facturaPendiente) {
+        toast.success('Llegó — falta que administración cargue la factura en Fudo')
+      } else if (mode === 'lve_stock') {
         toast.success(json.fudoSynced ? 'Llegó — stock cargado en Fudo' : 'Llegó — stock registrado en LVE')
       } else {
         toast.success('Llegó — pedido cerrado')
       }
-      if (paymentMethod === 'cuenta_corriente') toast.info('Quedó en Pagos pendiente de saldar')
+      if (paymentMethod === 'cuenta_corriente' && !facturaEnFudo) toast.info('Quedó en Pagos pendiente de saldar')
       onDone()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al confirmar')
@@ -1536,7 +1552,11 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
             )}
           </div>
 
-          {/* Medio de pago — PRIMERA PREGUNTA */}
+          {/* Comprobante primero: con Factura A no se paga ni se carga el precio acá */}
+          <DatosGastoFields campos={datosGasto.campos} />
+
+          {/* Medio de pago */}
+          {!facturaEnFudo && (
           <div>
             <p className="mb-1.5 text-[12px] font-semibold text-[#3d2c24]">
               ¿Cómo se paga? <span className="text-[#ea504c]">*</span>
@@ -1574,6 +1594,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
               </p>
             )}
           </div>
+          )}
 
           {/* Stock (si hay insumo vinculado) */}
           {stockItemId ? (
@@ -1607,6 +1628,9 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   </span>
                 )}
               </label>
+              {facturaEnFudo ? (
+                <p className="text-[10.5px] text-[#2f5d8a]">Queda como recibido. El stock entra cuando la factura esté en Fudo con los productos (la app la vincula sola).</p>
+              ) : (<>
               {/* Precio sin fricción: cargás por unidad O el total del ticket, el otro se calcula solo */}
               <div className="grid grid-cols-2 gap-2">
                 <label className="block">
@@ -1617,7 +1641,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   </div>
                 </label>
                 <label className="block">
-                  <span className="text-[11px] font-semibold text-[#3d2c24]">{datosGasto.datos.comprobante === 'factura_a' ? 'Total sin IVA ($)' : 'Total pagado ($)'}</span>
+                  <span className="text-[11px] font-semibold text-[#3d2c24]">Total pagado ($)</span>
                   <div className="relative mt-1">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-[#a39e97]">$</span>
                     <input type="number" min="0" step="any" value={totalCost} onChange={(e) => onTotalCostChange(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
@@ -1653,6 +1677,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                 {expiresAt && <span className="mt-0.5 block text-[10px] text-[#a39e97]">Queda como lote para el radar de vencimientos.</span>}
               </label>
               <p className="text-[10px] text-[#a39e97]">Se suma como delta sobre el stock actual de Fudo (no pisa ventas) y queda en el kardex con precio.</p>
+              </>)}
             </div>
           ) : (
             <div className="space-y-2">
@@ -1684,6 +1709,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   )}
                 </div>
               </div>
+              {!facturaEnFudo && (
               <div>
                 <p className="mb-1 text-[11px] font-semibold text-[#3d2c24]">Monto <span className="font-normal text-[#a39e97]">(opcional, para el historial de gastos)</span></p>
                 <div className="relative">
@@ -1691,10 +1717,9 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
                   <input type="number" min="0" step="any" value={sinStockAmount} onChange={(e) => setSinStockAmount(e.target.value)} placeholder="0" className="w-full rounded-xl border border-[#ebe6df] bg-white py-2 pl-7 pr-3 text-sm focus:border-[#006d5a] focus:outline-none" />
                 </div>
               </div>
+              )}
             </div>
           )}
-
-          <DatosGastoFields campos={datosGasto.campos} neto={netoCarga} />
 
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto…" className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
@@ -1706,7 +1731,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
             className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white active:scale-[0.98] disabled:opacity-60"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            Confirmar llegada
+            {facturaEnFudo ? 'Llegó (factura en Fudo)' : 'Confirmar llegada'}
           </button>
         </DialogFooter>
       </DialogContent>

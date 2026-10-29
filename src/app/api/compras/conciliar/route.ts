@@ -3,12 +3,14 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { requireRole } from '@/lib/supabase/require-role'
 import { matchOrdersWithExpenses, loadLinkedExpenseIds } from '@/lib/compras/conciliar'
 import { fetchFudoExpenses } from '@/lib/fudo/expenses'
+import { pedidosConFacturaPendiente } from '@/lib/compras/factura-en-fudo'
 
 // ---------------------------------------------------------------------------
 // GET /api/compras/conciliar
 //   Para cada pedido "en camino", el gasto de Fudo que mejor lo explica (mismo
 //   proveedor, fecha posterior al envío, insumo incluido). Además devuelve los
-//   últimos gastos de Fudo por proveedor para elegir a mano.
+//   últimos gastos de Fudo por proveedor para elegir a mano (también de los
+//   proveedores con una Factura A pendiente de cargar en Fudo).
 //   ?fresh=1 → saltea el cache de 30 min de gastos (botón "Actualizar gastos").
 // ---------------------------------------------------------------------------
 
@@ -27,7 +29,8 @@ export async function GET(request: NextRequest) {
     // Gastos recientes (para conciliar a mano): sólo los de proveedores con
     // pedidos en camino, y SIN los ya vinculados a otro pedido (si no, el
     // mismo gasto de Fudo aparecía para vincular dos veces).
-    const supplierIds = [...new Set(orders.map((o) => o.supplier_id).filter((x): x is string => Boolean(x)))]
+    const conFactura = await pedidosConFacturaPendiente(admin).catch(() => [])
+    const supplierIds = [...new Set([...orders, ...conFactura].map((o) => o.supplier_id).filter((x): x is string => Boolean(x)))]
     const [{ data: suppliers }, linkedIds] = await Promise.all([
       supplierIds.length
         ? admin.from('suppliers').select('id, name, fudo_provider_id').in('id', supplierIds)

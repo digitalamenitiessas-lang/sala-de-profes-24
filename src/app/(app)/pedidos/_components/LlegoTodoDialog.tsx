@@ -114,18 +114,19 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
   const faltaCantidad = [...llegan, ...extrasOk].some((f) => f.stockItemId && !(parseQty(f.qty) > 0))
   // Categoría del gasto: obligatoria cuando la compra tiene monto
   const datosGasto = useDatosGasto(supplier?.id)
-  // Factura A: los importes de cada producto van sin IVA (el IVA se carga aparte)
-  const sinIva = datosGasto.datos.comprobante === 'factura_a'
+  // Factura A: la carga administración en Fudo; acá solo queda lo que llegó
+  // (sin pago, precios ni stock: entra con la factura)
+  const facturaEnFudo = datosGasto.facturaEnFudo
   // Misma factura que una carga anterior de hoy: el total ya está en ese gasto
   const facturaYaCargada = !!datosGasto.campos.numeroAnterior && datosGasto.campos.numero.trim() === datosGasto.campos.numeroAnterior
   const hayMonto = sumaProductos > 0 || (Number.isFinite(facturaNum) && facturaNum > 0)
   // Si nada llegó pero hay productos que no vinieron, se puede cerrar sin medio de pago
   const puede = !enviando && (cuantosLlegan > 0
-    ? !!paymentMethod && !faltaCantidad && !(hayMonto && datosGasto.falta) && (extrasOk.length === 0 || !!supplier)
+    ? (facturaEnFudo ? !datosGasto.falta : !!paymentMethod && !(hayMonto && datosGasto.falta)) && !faltaCantidad && (extrasOk.length === 0 || !!supplier)
     : noVienen.length > 0)
 
   async function confirmar() {
-    if (cuantosLlegan > 0 && !paymentMethod) return
+    if (cuantosLlegan > 0 && !paymentMethod && !facturaEnFudo) return
     setEnviando(true)
     setErrores({})
     try {
@@ -135,7 +136,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
         body: JSON.stringify({
           action: 'confirm_arrival_batch',
           paymentMethod,
-          invoiceTotal: !facturaYaCargada && Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
+          invoiceTotal: !facturaEnFudo && !facturaYaCargada && Number.isFinite(facturaNum) && facturaNum > 0 ? facturaNum : null,
           note: nota.trim() || null,
           gasto: datosGasto.datos,
           supplierId: supplier?.id ?? null,
@@ -171,7 +172,10 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
       if (json.noVinieron > 0) {
         toast.success(json.noVinieron === 1 ? 'Marcaste 1 producto que no vino: no suma stock ni gasto' : `Marcaste ${json.noVinieron} productos que no vinieron: no suman stock ni gasto`)
       }
-      if (json.recibidos > 0) {
+      if (json.recibidos > 0 && json.facturaPendiente) {
+        const pendientes = json.recibidos - (json.vinculados ?? 0)
+        toast.success(`Llegaron ${json.recibidos} producto${json.recibidos === 1 ? '' : 's'} de ${supplier?.name ?? 'el proveedor'}${pendientes > 0 ? ': falta que administración cargue la factura en Fudo' : ': la factura ya estaba en Fudo y quedó vinculada'}`)
+      } else if (json.recibidos > 0) {
         const quedan = filas.length - llegan.length - noVienen.length
         if (json.agregados > 0) toast.success(json.agregados === 1 ? 'Lo que llegó de más quedó registrado' : `Los ${json.agregados} que llegaron de más quedaron registrados`)
         toast.success(`Llegaron ${json.recibidos} producto${json.recibidos === 1 ? '' : 's'} de ${supplier?.name ?? 'el proveedor'}${quedan ? ` · ${quedan} ${quedan === 1 ? 'sigue' : 'siguen'} en camino` : ''}`)
@@ -274,7 +278,11 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
             </div>
           )}
 
+          {/* Comprobante primero: con Factura A no se paga ni se cargan precios acá */}
+          <DatosGastoFields campos={datosGasto.campos} />
+
           {/* Medio de pago — una sola vez para todo */}
+          {!facturaEnFudo && (
           <div>
             <p className="mb-1.5 text-[12px] font-semibold text-[#3d2c24]">¿Cómo se paga? <span className="text-[#ea504c]">*</span></p>
             <div className="grid grid-cols-2 gap-1.5">
@@ -296,6 +304,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
               ))}
             </div>
           </div>
+          )}
 
           {/* Productos */}
           <div>
@@ -384,8 +393,9 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                             className={cn('mt-0.5 w-full rounded-lg border bg-white px-2 py-1.5 text-[13px] focus:outline-none', si && !(parseQty(f.qty) > 0) ? 'border-[#ea504c]' : 'border-[#ebe6df] focus:border-[#006d5a]')}
                           />
                         </label>
+                        {!facturaEnFudo && (
                         <label className="block">
-                          <span className="text-[10px] font-semibold text-[#7d6c64]">{sinIva ? '$ total sin IVA (opcional)' : '$ total (opcional)'}</span>
+                          <span className="text-[10px] font-semibold text-[#7d6c64]">$ total (opcional)</span>
                           <input
                             inputMode="decimal"
                             value={f.total}
@@ -422,9 +432,10 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                             )
                           })()}
                         </label>
+                        )}
                         {!f.abierto ? (
                           <button type="button" onClick={() => set(i, { abierto: true })} className="col-span-2 text-left text-[11px] font-medium text-[#7d6c64] underline decoration-dotted">
-                            {f.note || f.expiresAt ? 'Ver detalle' : '+ Detalle o vencimiento'}
+                            {f.note || f.expiresAt ? 'Ver detalle' : facturaEnFudo ? '+ Detalle' : '+ Detalle o vencimiento'}
                           </button>
                         ) : (
                           <>
@@ -434,7 +445,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                               placeholder="Detalle: vino distinto, faltó una parte…"
                               className="col-span-2 w-full rounded-lg border border-[#ebe6df] bg-white px-2 py-1.5 text-[12px] focus:border-[#006d5a] focus:outline-none"
                             />
-                            {si && (
+                            {si && !facturaEnFudo && (
                               <label className="col-span-2 flex items-center gap-2 text-[10.5px] text-[#7d6c64]">
                                 Vence
                                 <input type="date" value={f.expiresAt} onChange={(e) => set(i, { expiresAt: e.target.value })} className="flex-1 rounded-lg border border-[#ebe6df] bg-white px-2 py-1 text-[12px]" />
@@ -451,7 +462,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                 <FilaLlegoDeMas
                   key={e.key}
                   fila={e}
-                  sinIva={sinIva}
+                  sinPrecio={facturaEnFudo}
                   comprables={comprables}
                   stockById={stockById}
                   fudo={fudo}
@@ -476,10 +487,9 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
             </div>
           </div>
 
-          <DatosGastoFields campos={datosGasto.campos} neto={sumaProductos} totalFactura={facturaYaCargada ? null : facturaNum} />
-
           {/* Factura y nota general */}
           <div className="space-y-2 rounded-xl bg-[#faf8f5] p-3">
+            {!facturaEnFudo && (
             <label className="block">
               <span className="text-[11px] font-semibold text-[#3d2c24]">Total de la factura <span className="font-normal text-[#a39e97]">(opcional)</span></span>
               {facturaYaCargada && (
@@ -498,6 +508,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
                   : 'Si no sabés el precio de cada producto, poné solo el total: queda en Pagos.'}
               </span>
             </label>
+            )}
             <input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Nota para todo el pedido (opcional)" className="w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm focus:border-[#006d5a] focus:outline-none" />
           </div>
         </div>
@@ -510,7 +521,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
           >
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
             {cuantosLlegan > 0
-              ? `Confirmar ${cuantosLlegan} producto${cuantosLlegan === 1 ? '' : 's'}`
+              ? facturaEnFudo ? `Llegaron ${cuantosLlegan} (factura en Fudo)` : `Confirmar ${cuantosLlegan} producto${cuantosLlegan === 1 ? '' : 's'}`
               : (noVienen.length === 1 ? 'Marcar 1 que no vino' : `Marcar ${noVienen.length} que no vinieron`)}
           </button>
         </DialogFooter>

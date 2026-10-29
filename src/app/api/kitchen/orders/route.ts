@@ -10,6 +10,7 @@ import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
 import { conCargadoPor, NOTA_IMPUESTOS, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 import { fraccionADecimal } from '@/lib/compras/lista-pegada'
+import { esFacturaEnFudo, marcarFacturaPendiente, MODO_FACTURA_PENDIENTE, sumarStockSinRenglon, vincularSiYaEstaEnFudo } from '@/lib/compras/factura-en-fudo'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -384,7 +385,10 @@ export async function POST(request: NextRequest) {
       if (items.length + agregados.length === 0 || items.length + agregados.length > 60) {
         return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
       }
-      if (agregados.length > 0 && !paymentMethod) {
+      // Factura A: se carga en Fudo (lib/compras/factura-en-fudo). Acá solo
+      // queda lo que llegó, sin pago, stock ni gasto
+      const facturaEnFudo = esFacturaEnFudo(gasto)
+      if (agregados.length > 0 && !paymentMethod && !facturaEnFudo) {
         return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
       }
 
@@ -426,7 +430,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Marcá al menos un producto que llegó' }, { status: 400 })
       }
       // El medio de pago hace falta solo si algo llegó (lo que no vino no se paga)
-      if (llegan.length > 0 && !paymentMethod) {
+      if (llegan.length > 0 && !paymentMethod && !facturaEnFudo) {
         return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
       }
 
@@ -440,6 +444,31 @@ export async function POST(request: NextRequest) {
           if (r.status < 300 && r.json.success === true) noVinoOk++
           else console.warn('[confirm_arrival_batch] no vino no registrado:', it.orderId, r.json.error)
         }
+      }
+
+      if (facturaEnFudo) {
+        const resultadosFactura: { orderId: number; ok: boolean; error?: string; vinculadoA?: string | null }[] = []
+        for (const it of llegan) {
+          const r = await marcarFacturaPendiente(admin, user.id, {
+            orderId: it.orderId, source: it.source, receivedQty: it.receivedQty ?? null, stockItemId: it.stockItemId ?? null,
+            numero: gasto?.numero ?? null, nota: it.note ?? note ?? null,
+          })
+          const vinculadoA = r.ok ? await vincularSiYaEstaEnFudo(admin, { id: it.orderId, source: it.source }).catch(() => null) : null
+          resultadosFactura.push({ orderId: it.orderId, ok: r.ok, error: r.error, vinculadoA })
+        }
+        const recibidos = resultadosFactura.filter((r) => r.ok).length
+        if (recibidos > 0) {
+          void logAudit(admin, {
+            userId: user.id, userName: [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null,
+            action: 'confirm_arrival_factura_pendiente', module: 'pedidos', entityType: 'kitchen_order',
+            description: `Llegaron ${recibidos} producto${recibidos === 1 ? '' : 's'} con Factura A${gasto?.numero ? ` N° ${gasto.numero}` : ''}: la factura se carga en Fudo`,
+            metadata: { resultados: resultadosFactura, numero: gasto?.numero ?? null, supplierId: proveedorElegido ?? null },
+          })
+        }
+        return NextResponse.json({
+          success: recibidos > 0 || noVinoOk > 0, recibidos, noVinieron: noVinoOk, agregados: agregados.length,
+          facturaPendiente: true, vinculados: resultadosFactura.filter((r) => r.vinculadoA).length, resultados: resultadosFactura,
+        })
       }
 
       const resultados: { orderId: number; ok: boolean; error?: string; stockUpdated?: boolean }[] = []
@@ -727,10 +756,12 @@ export async function POST(request: NextRequest) {
       const resultados: { orderId: number; ok: boolean; error?: string; conImporte?: boolean }[] = []
       for (const it of items) {
         const tabla = it.source === 'barra' ? 'bar_orders' : 'kitchen_orders'
-        const { data: o } = await admin.from(tabla).select('id, product_name, quantity, status, stock_item_id, supplier_id').eq('id', it.orderId).maybeSingle()
-        const order = o as { id: number; product_name: string; quantity: string; status: string; stock_item_id: string | null; supplier_id: string | null } | null
+        const { data: o } = await admin.from(tabla).select('id, product_name, quantity, status, stock_item_id, supplier_id, received_mode, received_qty, received_at').eq('id', it.orderId).maybeSingle()
+        const order = o as { id: number; product_name: string; quantity: string; status: string; stock_item_id: string | null; supplier_id: string | null; received_mode: string | null; received_qty: string | null; received_at: string | null } | null
         if (!order) { resultados.push({ orderId: it.orderId, ok: false, error: 'Pedido no encontrado' }); continue }
-        if (order.status === 'received') { resultados.push({ orderId: it.orderId, ok: false, error: 'Ya estaba recibido' }); continue }
+        // Llegó con la Factura A pendiente: se cierra ahora con la factura
+        const pendiente = order.status === 'received' && order.received_mode === MODO_FACTURA_PENDIENTE
+        if (order.status === 'received' && !pendiente) { resultados.push({ orderId: it.orderId, ok: false, error: 'Ya estaba recibido' }); continue }
         if (order.supplier_id && proveedorGasto && order.supplier_id !== proveedorGasto) {
           resultados.push({ orderId: it.orderId, ok: false, error: 'El gasto de Fudo es de otro proveedor' }); continue
         }
@@ -739,7 +770,7 @@ export async function POST(request: NextRequest) {
           : { data: null }
         const si = siData as { id: string; unit: string; fudo_ingredient_id: string | null; fudo_product_id: string | null } | null
         const linea = si ? g.lineas.find((l) => (si.fudo_ingredient_id && l.ingredientId === si.fudo_ingredient_id) || (si.fudo_product_id && l.productId === si.fudo_product_id)) : undefined
-        const qtyPedido = parseFloat(fraccionADecimal(String(order.quantity ?? '')).replace(',', '.'))
+        const qtyPedido = parseFloat(fraccionADecimal(String((pendiente ? order.received_qty : null) ?? order.quantity ?? '')).replace(',', '.'))
         const qty = linea && linea.qty > 0 ? linea.qty : (Number.isFinite(qtyPedido) && qtyPedido > 0 ? qtyPedido : 1)
         const total = linea && linea.total > 0 ? Math.round(linea.total * 100) / 100 : null
         const ahoraIso = new Date().toISOString()
@@ -767,11 +798,20 @@ export async function POST(request: NextRequest) {
         if (recErr) { resultados.push({ orderId: it.orderId, ok: false, error: recErr.message }); continue }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: upErr } = await (admin.from(tabla) as any).update({
-          status: 'received', received_qty: qty, received_at: ahoraIso, received_by: user.id,
+          status: 'received', received_qty: pendiente ? order.received_qty : qty, received_at: pendiente ? order.received_at ?? ahoraIso : ahoraIso,
+          ...(pendiente ? {} : { received_by: user.id }),
           received_mode: 'fudo_expense', fudo_expense_id: idGasto, fudo_amount: total,
-          received_note: `Cargado directo en Fudo (gasto #${idGasto}): sin sumar stock acá`, updated_at: ahoraIso,
+          received_note: linea ? `Cargado directo en Fudo (gasto #${idGasto}): sin sumar stock acá` : `Cargado en Fudo (gasto #${idGasto}) sin este producto: el stock lo sumó la app`,
+          updated_at: ahoraIso,
         }).eq('id', order.id)
         if (upErr) { resultados.push({ orderId: it.orderId, ok: false, error: upErr.message }); continue }
+        // Sin renglón en el gasto, Fudo no le sumó stock: lo suma la app
+        if (!linea && order.stock_item_id) {
+          await sumarStockSinRenglon(admin, {
+            id: order.id, source: it.source, supplier_id: order.supplier_id, stock_item_id: order.stock_item_id,
+            product_name: order.product_name, received_qty: pendiente ? order.received_qty : order.quantity, received_at: order.received_at,
+          }, idGasto)
+        }
         resultados.push({ orderId: it.orderId, ok: true, conImporte: total != null })
       }
       const cerrados = resultados.filter((r) => r.ok).length
@@ -1041,6 +1081,21 @@ async function confirmarLlegada(
     return respuesta({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
   }
   if (!skipFudoExpense) gasto = conCargadoPor(gasto, [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null)
+  // Factura A: se carga en Fudo (lib/compras/factura-en-fudo). Acá solo queda
+  // que llegó: sin pago, stock ni gasto (el stock entra con la factura)
+  if (!skipFudoExpense && esFacturaEnFudo(gasto)) {
+    const stockElegido = typeof (body as { stockItemId?: unknown }).stockItemId === 'string' ? (body as { stockItemId: string }).stockItemId : null
+    const r = await marcarFacturaPendiente(admin, user.id, { orderId, source, receivedQty: receivedQty ?? null, stockItemId: stockElegido, numero: gasto?.numero ?? null, nota: note ?? null })
+    if (!r.ok) return respuesta({ success: false, error: r.error }, { status: 409 })
+    const vinculadoA = await vincularSiYaEstaEnFudo(admin, { id: orderId, source }).catch(() => null)
+    void logAudit(admin, {
+      userId: user.id, userName: [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null,
+      action: 'confirm_arrival_factura_pendiente', module: 'pedidos', entityType: source === 'barra' ? 'bar_order' : 'kitchen_order', entityId: String(orderId),
+      description: `Llegó el pedido #${orderId} con Factura A${gasto?.numero ? ` N° ${gasto.numero}` : ''}: ${vinculadoA ? `vinculado al gasto #${vinculadoA} de Fudo` : 'la factura se carga en Fudo'}`,
+      metadata: { orderId, source, numero: gasto?.numero ?? null, vinculadoA },
+    })
+    return respuesta({ success: true, facturaPendiente: !vinculadoA, vinculadoA })
+  }
   const table = source === 'barra' ? 'bar_orders' : 'kitchen_orders'
   const { data: order, error: fetchErr } = await admin
     .from(table)
