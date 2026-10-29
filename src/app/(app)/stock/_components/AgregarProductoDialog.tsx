@@ -25,7 +25,7 @@ const UNIDADES = [
 
 const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none'
 
-export type ProductoCreado = { id: string; name: string; unit: string; area: string; current_qty: number; min_qty: number }
+export type ProductoCreado = { id: string; name: string; unit: string; area: string; current_qty: number; min_qty: number; fudo_skip?: boolean }
 
 export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, ayuda, onClose, onCreado }: {
   existentes: { id: string; name: string }[]
@@ -64,7 +64,9 @@ export function AgregarProductoDialog({ existentes, nombreInicial, areaInicial, 
       })
       const json = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(json.error ?? 'No se pudo agregar')
-      toast.success(`"${json.item?.name ?? nombre.trim()}" agregado al stock`)
+      toast.success(json.vinculadoAFudo
+        ? `"${json.vinculadoAFudo}" ya estaba en Fudo: quedó vinculado (suma al gasto y al stock de Fudo)`
+        : `"${json.item?.name ?? nombre.trim()}" agregado al stock`)
       onCreado(json.item as ProductoCreado)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'No se pudo agregar')

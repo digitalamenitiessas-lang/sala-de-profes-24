@@ -1,4 +1,4 @@
-import { fudoFetch } from '@/lib/fudoClient'
+import { fudoFetch, fudoHttp } from '@/lib/fudoClient'
 import { descripcionGasto, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
@@ -464,6 +464,196 @@ export async function leerGastoFudo(expenseId: string): Promise<{
   }
 }
 
+// ---------------------------------------------------------------------------
+// Correcciones de la app que tienen que quedar igual en Fudo (contable)
+// ---------------------------------------------------------------------------
+// Antes, corregir el monto o anular una recepción en Sala de Profes no tocaba
+// el gasto de Fudo y quedaban diferencias para conciliar (gasto #175: la app
+// en $45.135,25 y Fudo en $37.301,86). Estas funciones llevan la corrección a
+// Fudo: renglón, monto del gasto y pago o deuda en Cta. Cte.
+
+type GastoParaAjuste = {
+  amount: number; pagado: boolean; anulado: boolean
+  items: { id: string; ingredientId: string | null; productId: string | null; qty: number; price: number }[]
+  pagos: { id: string; amount: number; paymentMethodId: string | null }[]
+}
+
+/** null = el gasto no existe en Fudo (lo borraron) */
+async function leerGastoParaAjuste(expenseId: string): Promise<GastoParaAjuste | null> {
+  if (!/^\d{1,10}$/.test(expenseId)) return null
+  const res = await fudoFetch<{ data?: JsonApiRes; included?: JsonApiRes[] }>(
+    `/expenses/${expenseId}?fields[expense]=amount,status,canceled,expenseItems,payments`
+    + '&fields[expenseItem]=price,quantity,ingredient,product&fields[payment]=amount,canceled,paymentMethod'
+    + '&include=expenseItems,payments',
+  ).catch((e) => {
+    if (e instanceof Error && /Fudo API 404/.test(e.message)) return null
+    throw e
+  })
+  const d = res?.data
+  if (!d) return null
+  const inc = res.included ?? []
+  return {
+    amount: Number(d.attributes?.amount ?? 0) || 0,
+    pagado: d.attributes?.status === 'PAID',
+    anulado: d.attributes?.canceled === true,
+    items: inc.filter((x) => x.type === 'ExpenseItem').map((x) => ({
+      id: x.id,
+      ingredientId: relOne(x.relationships, 'ingredient')?.id ?? null,
+      productId: relOne(x.relationships, 'product')?.id ?? null,
+      qty: Number(x.attributes?.quantity ?? 0) || 0,
+      price: Number(x.attributes?.price ?? 0) || 0,
+    })),
+    pagos: inc.filter((x) => x.type === 'Payment' && x.attributes?.canceled !== true).map((x) => ({
+      id: x.id,
+      amount: Number(x.attributes?.amount ?? 0) || 0,
+      paymentMethodId: relOne(x.relationships, 'paymentMethod')?.id ?? null,
+    })),
+  }
+}
+
+const redondo = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * Lleva los pagos del gasto al monto nuevo: la deuda en Cta. Cte. pasa al monto;
+ * si estaba pagado y sube, se paga la diferencia con el mismo medio; si baja y
+ * hay un solo pago, ese pago baja. Devuelve un aviso si hay que revisarlo a mano.
+ */
+async function ajustarPagosAlMonto(expenseId: string, g: GastoParaAjuste, nuevoMonto: number, medio: string | null | undefined): Promise<string | null> {
+  const ctaCteId = await fudoPaymentMethodId('cuenta_corriente').catch(() => null)
+  if (ctaCteId && g.pagos.some((p) => p.paymentMethodId === ctaCteId)) {
+    await ajustarDeudaCtaCte(expenseId, nuevoMonto)
+    return null
+  }
+  const pagado = redondo(g.pagos.reduce((s, p) => s + p.amount, 0))
+  if (Math.abs(pagado - nuevoMonto) < 0.01 || g.pagos.length === 0) return null
+  if (nuevoMonto > pagado) {
+    await postFudoPayment({ expenseId, amount: redondo(nuevoMonto - pagado), medio: medio === 'cuenta_corriente' ? 'efectivo' : medio })
+    return null
+  }
+  if (g.pagos.length === 1) {
+    await fudoFetch(`/payments/${encodeURIComponent(g.pagos[0].id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: g.pagos[0].id, type: 'Payment', attributes: { amount: nuevoMonto } } }),
+    })
+    return null
+  }
+  return `El gasto #${expenseId} tiene varios pagos: revisá en Fudo que el pagado sea ${nuevoMonto.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}`
+}
+
+/**
+ * Corrección del monto de un recibo (Corregir recepción / Editar recibo /
+ * precio cargado después): el renglón del producto pasa al total nuevo. El
+ * monto del gasto (y su pago o deuda) cambia con la diferencia solo si era la
+ * suma de los recibos de la app; si tiene el total de la factura ("Llegó
+ * todo" con importe sin detallar), ese total queda: lo manda la factura.
+ */
+export async function corregirMontoEnGastoFudo(p: {
+  expenseId: string; deltaMonto: number; nuevoTotalLinea: number | null
+  /** Suma de los recibos de la app con este gasto, antes de la corrección */
+  sumaRecibosAntes: number
+  fudoIngredientId?: string | null; fudoProductId?: string | null; medio?: string | null
+}): Promise<{ ok: boolean; aviso?: string }> {
+  try {
+    const g = await leerGastoParaAjuste(p.expenseId)
+    if (!g) return { ok: false, aviso: `No encontré el gasto #${p.expenseId} en Fudo: corregilo a mano` }
+    if (g.anulado) return { ok: false, aviso: `El gasto #${p.expenseId} está anulado en Fudo` }
+    if (Math.abs(p.deltaMonto) < 0.01) return { ok: true }
+    const cambiaMonto = Math.abs(g.amount - p.sumaRecibosAntes) < 1
+    const item = g.items.find((i) => (p.fudoIngredientId && i.ingredientId === p.fudoIngredientId) || (p.fudoProductId && i.productId === p.fudoProductId))
+    if (item && p.nuevoTotalLinea != null && p.nuevoTotalLinea > 0) {
+      await fudoFetch(`/expense-items/${encodeURIComponent(item.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { id: item.id, type: 'ExpenseItem', attributes: { price: redondo(p.nuevoTotalLinea) } } }),
+      })
+    }
+    const nuevoMonto = cambiaMonto ? redondo(g.amount + p.deltaMonto) : g.amount
+    if (nuevoMonto <= 0) return { ok: false, aviso: `El gasto #${p.expenseId} quedaría en $0: anulalo en vez de corregirlo` }
+    // Monto explícito al final: cambiar un renglón puede recalcular el gasto
+    await fudoFetch(`/expenses/${encodeURIComponent(p.expenseId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: { id: p.expenseId, type: 'Expense', attributes: { amount: nuevoMonto } } }),
+    })
+    cache = null
+    if (!cambiaMonto) {
+      const total = g.amount.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })
+      return { ok: true, aviso: `En Fudo el gasto #${p.expenseId} sigue con el total de la factura (${total}): si el total cambió, corregilo allá` }
+    }
+    const aviso = await ajustarPagosAlMonto(p.expenseId, g, nuevoMonto, p.medio)
+    return { ok: true, ...(aviso ? { aviso } : {}) }
+  } catch (err) {
+    console.warn('[corregirMontoEnGastoFudo]', err instanceof Error ? err.message : err)
+    return { ok: false, aviso: `No se pudo corregir el gasto #${p.expenseId} en Fudo: corregilo a mano` }
+  }
+}
+
+/**
+ * Anulación de un recibo: si era lo único de la factura, se anula el gasto en
+ * Fudo con sus pagos; si no, sale su renglón y baja el monto (con su pago o
+ * deuda). Se lee el stock antes y después: si Fudo devolvió el stock al
+ * anular, quien llama NO lo descuenta otra vez (registra lo que quedó en Fudo).
+ */
+export async function anularEnGastoFudo(p: {
+  expenseId: string; monto: number; qty: number; quedanOtros: boolean
+  fudoIngredientId?: string | null; fudoProductId?: string | null; medio?: string | null
+}): Promise<{ ok: boolean; fudoDevolvioStock: boolean; fudoAfter: number | null; aviso?: string }> {
+  const nada = { ok: false, fudoDevolvioStock: false, fudoAfter: null }
+  try {
+    const g = await leerGastoParaAjuste(p.expenseId)
+    // Ya no está o ya está anulado: no hay nada que hacer en Fudo
+    if (!g || g.anulado) return { ok: true, fudoDevolvioStock: false, fudoAfter: null }
+    const { readFudoIngredientStock, readFudoProductStock } = await import('@/lib/fudo/stock-sync')
+    const leer = async () => (p.fudoIngredientId ? readFudoIngredientStock(p.fudoIngredientId) : p.fudoProductId ? readFudoProductStock(p.fudoProductId) : null)
+    const item = g.items.find((i) => (p.fudoIngredientId && i.ingredientId === p.fudoIngredientId) || (p.fudoProductId && i.productId === p.fudoProductId))
+    const antes = await leer().catch(() => null)
+
+    let aviso: string | null = null
+    if (!p.quedanOtros) {
+      await fudoFetch(`/expenses/${encodeURIComponent(p.expenseId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { id: p.expenseId, type: 'Expense', attributes: { canceled: true } } }),
+      })
+      // Sus pagos también (o la deuda en Cta. Cte.): si no, quedaba plata
+      // saliendo de caja o deuda con el proveedor por una compra que no fue
+      let sinAnular = 0
+      for (const pago of g.pagos) {
+        await fudoFetch(`/payments/${encodeURIComponent(pago.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { id: pago.id, type: 'Payment', attributes: { canceled: true } } }),
+        }).catch((e) => { sinAnular++; console.warn('[anularEnGastoFudo] pago sin anular:', pago.id, e instanceof Error ? e.message : e) })
+      }
+      if (sinAnular > 0) aviso = `Gasto #${p.expenseId} anulado en Fudo, pero ${sinAnular === 1 ? 'un pago quedó' : `${sinAnular} pagos quedaron`} sin anular: revisalo allá`
+    } else {
+      if (item) {
+        // Sin fudoFetch: el DELETE responde sin cuerpo
+        const r = await fudoHttp(`https://api.fu.do/v1alpha1/expense-items/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
+        if (!r.ok && r.status !== 404) throw new Error(`Fudo API ${r.status} al quitar el renglón ${item.id}`)
+      }
+      const nuevoMonto = redondo(g.amount - p.monto)
+      if (nuevoMonto > 0) {
+        await fudoFetch(`/expenses/${encodeURIComponent(p.expenseId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { id: p.expenseId, type: 'Expense', attributes: { amount: nuevoMonto } } }),
+        })
+        aviso = await ajustarPagosAlMonto(p.expenseId, g, nuevoMonto, p.medio)
+      }
+    }
+    cache = null
+    // ¿Fudo devolvió el stock? (con margen, como al sumar)
+    const despues = item || !p.quedanOtros ? await leer().catch(() => null) : null
+    const devolvio = antes !== null && despues !== null && antes - despues >= p.qty * 0.5
+    return { ok: true, fudoDevolvioStock: devolvio, fudoAfter: devolvio ? despues : null, ...(aviso ? { aviso } : {}) }
+  } catch (err) {
+    console.warn('[anularEnGastoFudo]', err instanceof Error ? err.message : err)
+    return { ...nada, aviso: `Fudo no respondió al anular el gasto #${p.expenseId}` }
+  }
+}
+
 /** Cuerpo del POST /expenses: proveedor + categoría + comprobante + medio de pago. */
 export async function fudoExpenseBody(params: {
   fudoProviderId: string
@@ -546,9 +736,9 @@ export async function agregarItemAGastoFudo(params: {
   const { readFudoIngredientStock, readFudoProductStock } = await import('@/lib/fudo/stock-sync')
   const leer = () => (fudoIngredientId ? readFudoIngredientStock(fudoIngredientId) : readFudoProductStock(fudoProductId!))
   try {
+    // null = Fudo no tiene stock cargado (o no lo controla). El renglón va
+    // igual: sin él el gasto quedaba "importe sin detallar" (Manteca, #126)
     const antes = await leer()
-    // Sin control de stock en Fudo no hay cómo verificar: se suma como siempre
-    if (antes === null) return nada
     const montoRes = await fudoFetch<{ data?: JsonApiRes }>(`/expenses/${encodeURIComponent(expenseId)}?fields[expense]=amount`)
     const montoAntes = Number(montoRes?.data?.attributes?.amount ?? NaN)
 
@@ -573,7 +763,10 @@ export async function agregarItemAGastoFudo(params: {
     // Con margen: alguna venta justo en el medio puede mover un poco el número.
     // Si el ítem entró pero no se puede releer, se asume que Fudo lo sumó (es
     // lo que hace con un gasto con insumo): sumarlo de nuevo sería doble.
-    const sumoStock = despues === null || despues - antes >= qty * 0.5
+    // Sin stock antes: sumó solo si ahora tiene (si no, se suma como siempre).
+    const sumoStock = antes === null
+      ? despues !== null && despues >= qty * 0.5
+      : despues === null || despues - antes >= qty * 0.5
 
     // El monto del gasto lo manda Sala de Profes (factura, resto sin detallar)
     if (Number.isFinite(montoAntes)) {

@@ -1914,7 +1914,8 @@ function CorrectionDialog({ order, onClose, onDone }: {
       })
       const json = await res.json()
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Error al guardar')
-      toast.success('Recepción corregida')
+      toast.success(`Recepción corregida${json.gastoFudoTexto ? `. ${json.gastoFudoTexto}` : ''}`)
+      if (json.avisoFudo) toast.warning(json.avisoFudo, { duration: 10000 })
       if (json.fudoSynced === false && body.qty !== undefined) toast.info('Stock ajustado solo en LVE (insumo sin mapeo Fudo)')
       onDone()
     } catch (err) {
@@ -1939,7 +1940,8 @@ function CorrectionDialog({ order, onClose, onDone }: {
         const msg = json.stockReversed
           ? json.fudoReversed ? 'Anulado — stock revertido en Fudo y LVE' : 'Anulado — stock revertido en LVE'
           : 'Recepción anulada — pedido volvió a "en camino"'
-        toast.success(msg)
+        toast.success(json.gastoFudoTexto ? `${msg} · ${json.gastoFudoTexto}` : msg)
+        if (json.avisoFudo) toast.warning(json.avisoFudo, { duration: 10000 })
       }
       onDone()
     } catch (err) {

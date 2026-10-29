@@ -522,7 +522,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
           ayuda={<>Para productos que <b>no están en Fudo</b> (vasos, tapas, limpieza…). Si va en recetas, cargalo primero en Fudo y buscalo acá: aparece como «está en Fudo · traer».</>}
           onClose={() => setCrear(null)}
           onCreado={(item) => {
-            usarInsumo(crear.key, { id: item.id, name: item.name, unit: item.unit, current_qty: item.current_qty, fudo_skip: true })
+            usarInsumo(crear.key, { id: item.id, name: item.name, unit: item.unit, current_qty: item.current_qty, fudo_skip: item.fudo_skip ?? true })
             setCrear(null)
           }}
         />

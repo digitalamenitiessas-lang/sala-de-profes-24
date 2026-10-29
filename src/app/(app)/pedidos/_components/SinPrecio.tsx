@@ -66,6 +66,7 @@ export function SinPrecioSection({ recibos, onSaved }: { recibos: ReciboSinPreci
       if (!res.ok) throw new Error(json.error ?? 'No se pudo guardar el precio')
       if (json.gastoFudo === 'sin_proveedor') toast.warning(`Precio cargado, pero ${json.gastoFudoTexto}`)
       else toast.success(`Precio cargado — ${r.supplier_name}: ya suma a la deuda${json.gastoFudoTexto ? `. ${json.gastoFudoTexto}` : ''}`)
+      if (json.avisoFudo) toast.warning(json.avisoFudo, { duration: 10000 })
       setEditId(null)
       setMonto('')
       onSaved()

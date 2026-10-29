@@ -255,7 +255,8 @@ export default function CuentasPage() {
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Error al guardar')
-      toast.success('Recibo actualizado')
+      toast.success(`Recibo actualizado${json.gastoFudoTexto ? `. ${json.gastoFudoTexto}` : ''}`)
+      if (json.avisoFudo) toast.warning(json.avisoFudo, { duration: 10000 })
       setEditState(null)
       fetchData()
     } catch (err) {

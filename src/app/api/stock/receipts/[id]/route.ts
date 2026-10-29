@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { isManagerOrAbove } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
-import { fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
+import { anularEnGastoFudo, corregirMontoEnGastoFudo, fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
 import { NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
 
@@ -13,6 +13,8 @@ import { NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
 // ---------------------------------------------------------------------------
 // Edita un recibo de compra: monto, nota, medio de pago, cantidad.
 // Si cambia la cantidad y el recibo tiene stock_item_id, aplica el delta a Fudo.
+// Si cambia el monto y el gasto de Fudo lo creó la app, se corrige allá
+// también (renglón, monto y pago o deuda): antes quedaba distinto (#175).
 // Estado de pago:
 //   'pagado'  → marca pagado (paid_at + paid_by) e intenta imputar en Fudo
 //   'a_pagar' → deshace un pago marcado por error (limpia paid_at/paid_by);
@@ -22,6 +24,11 @@ import { NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
 // DELETE /api/stock/receipts/[id]
 // ---------------------------------------------------------------------------
 // Anula un recibo:
+//   - Gasto de Fudo creado por la app: si era lo único de la factura se anula;
+//     si no, sale el renglón y baja el monto. Si al anular Fudo ya devolvió el
+//     stock, no se descuenta otra vez.
+//   - Gasto cargado directo en Fudo (importado o "Ya está cargado en Fudo"):
+//     la app no le sumó stock, así que no se revierte; el gasto se anula allá.
 //   - Revierte el delta de stock en Fudo/LVE si el insumo está vinculado.
 //   - Resetea el pedido a "ordered" para poder volver a recibirlo.
 //   - Elimina el registro de stock_receipts.
@@ -42,6 +49,20 @@ type ReceiptRow = {
   order_source: string | null
   received_date: string | null
   fudo_expense_id: string | null
+}
+
+/** Gasto que cargaron directo en Fudo: la app no lo creó ni le sumó stock (se corrige en Fudo) */
+function cargadoEnFudo(note: string | null): boolean {
+  return /Importado desde Fudo|cargado directo en Fudo/i.test(note ?? '')
+}
+
+/** Gasto de Fudo del recibo: el suyo o el del pedido ("Llegó todo": uno por factura) */
+async function gastoDelRecibo(admin: ReturnType<typeof createAdminClient>, receipt: ReceiptRow): Promise<string | null> {
+  if (receipt.fudo_expense_id) return receipt.fudo_expense_id
+  if (!receipt.order_id || !receipt.order_source) return null
+  const table = receipt.order_source === 'barra' ? 'bar_orders' : 'kitchen_orders'
+  const { data: order } = await admin.from(table).select('fudo_expense_id').eq('id', receipt.order_id).maybeSingle()
+  return (order as { fudo_expense_id?: string | null } | null)?.fudo_expense_id ?? null
 }
 
 async function loadReceipt(admin: ReturnType<typeof createAdminClient>, receiptId: number): Promise<ReceiptRow | null> {
@@ -202,15 +223,42 @@ export async function PATCH(
     const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
 
     // Precio cargado después ("Falta el precio"): si la compra todavía no está
-    // en Fudo como gasto, se crea ahora (antes quedaba solo en la app)
+    // en Fudo como gasto, se crea ahora (antes quedaba solo en la app).
+    // Monto corregido de una compra que ya tiene gasto: se corrige en Fudo.
     let gastoFudo: ResultadoGasto | null = null
-    if (update.cost_total !== undefined && Number(update.cost_total) > 0) {
-      gastoFudo = await asegurarGastoEnFudo(admin, receiptId, userName, user.id)
+    let montoFudo: { corregido: boolean; aviso: string | null } | null = null
+    if (update.cost_total !== undefined) {
+      const gastoId = await gastoDelRecibo(admin, receipt)
+      const delta = Math.round((Number(update.cost_total) - Number(receipt.cost_total ?? 0)) * 100) / 100
+      if (gastoId && Math.abs(delta) >= 0.01) {
+        if (cargadoEnFudo(receipt.note)) {
+          montoFudo = { corregido: false, aviso: `Este gasto lo cargaron en Fudo (#${gastoId}): corregí el monto allá también` }
+        } else {
+          const { data: ids } = receipt.stock_item_id
+            ? await admin.from('stock_items').select('fudo_ingredient_id, fudo_product_id').eq('id', receipt.stock_item_id).maybeSingle()
+            : { data: null }
+          // Ya con el monto nuevo guardado: la suma de antes es sin la diferencia
+          const { data: hermanos } = await admin.from('stock_receipts').select('cost_total').eq('fudo_expense_id', gastoId)
+          const sumaDespues = ((hermanos ?? []) as { cost_total: number | null }[]).reduce((t, h) => t + Number(h.cost_total ?? 0), 0)
+          const r = await corregirMontoEnGastoFudo({
+            expenseId: gastoId, deltaMonto: delta, nuevoTotalLinea: Number(update.cost_total),
+            sumaRecibosAntes: Math.round((sumaDespues - (receipt.fudo_expense_id ? delta : 0)) * 100) / 100,
+            fudoIngredientId: ids?.fudo_ingredient_id, fudoProductId: ids?.fudo_product_id, medio: receipt.payment_method,
+          })
+          montoFudo = { corregido: r.ok, aviso: r.aviso ?? null }
+        }
+      } else if (!gastoId && Number(update.cost_total) > 0) {
+        gastoFudo = await asegurarGastoEnFudo(admin, receiptId, userName, user.id)
+      }
     }
 
-    logAudit(admin, { userId: user.id, userName, action: 'edit_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} editado${gastoFudo === 'creado' ? ' · gasto creado en Fudo' : ''}`, metadata: { receiptId, changes: update, fudoSynced, gastoFudo } }).catch(() => {})
+    logAudit(admin, { userId: user.id, userName, action: 'edit_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} editado${gastoFudo === 'creado' ? ' · gasto creado en Fudo' : ''}${montoFudo?.corregido ? ' · monto corregido en Fudo' : ''}${montoFudo?.aviso ? ` · ${montoFudo.aviso}` : ''}`, metadata: { receiptId, changes: update, fudoSynced, gastoFudo, montoFudo } }).catch(() => {})
 
-    return NextResponse.json({ success: true, fudoSynced, gastoFudo, gastoFudoTexto: gastoFudo ? TEXTO_GASTO[gastoFudo] : null })
+    return NextResponse.json({
+      success: true, fudoSynced, gastoFudo,
+      gastoFudoTexto: gastoFudo ? TEXTO_GASTO[gastoFudo] : montoFudo?.corregido ? 'Corregido también en Fudo.' : null,
+      avisoFudo: montoFudo?.aviso ?? null,
+    })
   } catch (error) {
     console.error('[PATCH /api/stock/receipts/[id]]', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error interno' }, { status: 500 })
@@ -237,16 +285,44 @@ export async function DELETE(
     const receipt = await loadReceipt(admin, receiptId)
     if (!receipt) return NextResponse.json({ error: 'Recibo no encontrado' }, { status: 404 })
 
-    // 1) Revertir stock en Fudo/LVE si corresponde
+    const { data: si } = receipt.stock_item_id
+      ? await admin.from('stock_items').select('id, name, unit, current_qty, fudo_ingredient_id, fudo_product_id, fudo_skip').eq('id', receipt.stock_item_id).single()
+      : { data: null }
+
+    // 0) El gasto de Fudo. Antes de tocar el stock: si al anularlo Fudo
+    //    devuelve el stock, la app no lo descuenta otra vez.
+    const gastoId = await gastoDelRecibo(admin, receipt)
+    const deFudo = cargadoEnFudo(receipt.note)
+    let gastoFudo: { anulado: boolean; ajustado: boolean; aviso: string | null } | null = null
+    let fudoYaDevolvio: { fudoAfter: number | null } | null = null
+    if (gastoId && deFudo) {
+      gastoFudo = { anulado: false, ajustado: false, aviso: `Este gasto lo cargaron en Fudo (#${gastoId}): si la compra no fue, anulalo allá (si no, la app lo vuelve a traer)` }
+    } else if (gastoId) {
+      const { data: hermanos } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', gastoId).neq('id', receiptId)
+      const quedanOtros = ((hermanos ?? []) as { id: number; note: string | null }[]).some((r) => !(r.note ?? '').startsWith(NOTA_IMPUESTOS))
+      const r = await anularEnGastoFudo({
+        expenseId: gastoId, monto: Number(receipt.cost_total ?? 0), qty: receipt.qty, quedanOtros,
+        fudoIngredientId: si?.fudo_ingredient_id, fudoProductId: si?.fudo_product_id, medio: receipt.payment_method,
+      })
+      if (!r.ok) {
+        // Sin anular en Fudo no se borra: quedaría el gasto allá y nada acá
+        return NextResponse.json({ error: `${r.aviso ?? 'Fudo no respondió'}. El recibo NO se anuló: probá de nuevo.` }, { status: 502 })
+      }
+      gastoFudo = { anulado: !quedanOtros, ajustado: quedanOtros, aviso: r.aviso ?? null }
+      if (r.fudoDevolvioStock) fudoYaDevolvio = { fudoAfter: r.fudoAfter }
+    }
+
+    // 1) Revertir stock en Fudo/LVE si corresponde (no si lo cargaron directo
+    //    en Fudo: la app nunca se lo sumó)
     let stockReversed = false
     let fudoReversed = false
-    if (receipt.stock_item_id && receipt.qty > 0) {
-      const { data: si } = await admin.from('stock_items').select('id, name, unit, current_qty, fudo_ingredient_id, fudo_product_id, fudo_skip').eq('id', receipt.stock_item_id).single()
+    if (receipt.stock_item_id && receipt.qty > 0 && !deFudo) {
       if (si) {
         const write = await syncToFudo(admin, receipt.stock_item_id, Math.max(0, Number(si.current_qty) - receipt.qty), user.id, {
           reason: 'reception',
           deltaOverride: -receipt.qty,
-          note: `Anulación de recibo #${receiptId}: -${receipt.qty} ${si.unit}`,
+          note: `Anulación de recibo #${receiptId}: -${receipt.qty} ${si.unit}${fudoYaDevolvio ? ' (Fudo lo devolvió al anular el gasto)' : ''}`,
+          fudoSumadoPorGasto: fudoYaDevolvio,
         })
         // Si Fudo falla, la reversión queda en la cola de reintentos (no se pierde)
         if (!write.success) {
@@ -323,9 +399,10 @@ export async function DELETE(
     }
 
     const userName = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || null
-    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}${impuestosBorrados ? ' y su recibo de impuestos' : ''}`, metadata: { receiptId, qty: receipt.qty, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed, impuestosBorrados } }).catch(() => {})
+    const textoGasto = gastoFudo?.anulado ? `gasto #${gastoId} anulado en Fudo` : gastoFudo?.ajustado ? `gasto #${gastoId} corregido en Fudo` : null
+    logAudit(admin, { userId: user.id, userName, action: 'delete_receipt', module: 'pedidos', entityType: 'stock_receipt', entityId: String(receiptId), description: `Recibo #${receiptId} eliminado${stockReversed ? ` (stock revertido${fudoReversed ? ' en Fudo' : ' solo en LVE'})` : ''}${impuestosBorrados ? ' y su recibo de impuestos' : ''}${textoGasto ? ` · ${textoGasto}` : ''}${gastoFudo?.aviso ? ` · ${gastoFudo.aviso}` : ''}`, metadata: { receiptId, qty: receipt.qty, cost_total: receipt.cost_total, stock_item_id: receipt.stock_item_id, stockReversed, fudoReversed, impuestosBorrados, fudo_expense_id: gastoId, gastoFudo, fudoYaDevolvio: Boolean(fudoYaDevolvio) } }).catch(() => {})
 
-    return NextResponse.json({ success: true, stockReversed, fudoReversed })
+    return NextResponse.json({ success: true, stockReversed, fudoReversed, gastoFudoTexto: textoGasto, avisoFudo: gastoFudo?.aviso ?? null })
   } catch (error) {
     console.error('[DELETE /api/stock/receipts/[id]]', error)
     return NextResponse.json({ error: error instanceof Error ? error.message : 'Error interno' }, { status: 500 })
