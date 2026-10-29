@@ -70,7 +70,7 @@
   <div class="hoja">
     <small>Sala de Profes 24 · La Vieja Escuela · 24 y Maipú</small>
     <h1>Guía de compras</h1>
-    <p>Cómo cargar lo que llega para que quede bien en Fudo: importes, mercadería, impuestos y pagos.</p>
+    <p>Cómo cargar lo que llega para que quede bien en Fudo: facturas, mercadería, importes y pagos.</p>
     <a class="imprimir" href="compras.pdf" download="Guia-de-compras-Sala-de-Profes-24.pdf">Descargar PDF</a>
     <button class="imprimir" onclick="window.print()">Imprimir</button>
   </div>
@@ -81,9 +81,9 @@
 <section class="tarjeta esencial">
   <h2>Lo esencial</h2>
   <ol>
-    <li><b>Todo lo que entra se carga en Sala de Profes</b> (Compras). <b>No lo carguen también en Fudo</b>: la app ya manda el gasto con el detalle de la mercadería y el pago. Cargarlo en los dos lados lo duplica.</li>
-    <li><b>Una factura, un número.</b> Pongan siempre el número del comprobante. Si una factura se carga en partes, <b>el mismo número</b>: la app la junta en un solo gasto.</li>
-    <li><b>Factura A:</b> el importe de cada producto va <b>sin IVA</b> (la pantalla dice "sin IVA"). El IVA y el IIBB van en <b>Datos del gasto</b>.</li>
+    <li><b>Factura A → se carga en Fudo.</b> La carga quien está en la caja, completa: <b>proveedor, productos, IVA, IIBB, número y total</b>. En Sala de Profes solo se marca <span class="boton">Llegó</span> eligiendo <b>Factura A</b>: no se pone precio ni pago. La app la vincula sola.</li>
+    <li><b>Ticket, Factura B o C, o sin comprobante → se carga en Sala de Profes</b> (Compras), y <b>no también en Fudo</b>: la app ya manda el gasto con el detalle y el pago. Cargarlo en los dos lados lo duplica.</li>
+    <li><b>Una factura, un número.</b> Pongan siempre el número del comprobante. Si una factura se carga en partes, <b>el mismo número</b>.</li>
     <li><b>Elijan bien cómo se paga:</b> <b>efectivo</b> sale de la caja y lo descuenta el arqueo; <b>cuenta corriente</b> queda como deuda con el proveedor.</li>
   </ol>
 </section>
@@ -91,13 +91,14 @@
 <h2>¿Qué pasó? ¿Dónde lo cargo?</h2>
 <section class="tarjeta">
   <table>
-    <tr><td>Llegó el pedido de un proveedor</td><td>Compras → En camino → <span class="boton">Llegó todo</span></td></tr>
+    <tr><td>Llegó mercadería con <b>Factura A</b></td><td>Caja: cargarla en <b>Fudo</b>. App: <span class="boton">Llegó</span> → <b>Factura A</b></td></tr>
+    <tr><td>Llegó el pedido de un proveedor (ticket, Factura B/C)</td><td>Compras → En camino → <span class="boton">Llegó todo</span></td></tr>
     <tr><td>Llegó un solo producto del pedido</td><td>En camino → <span class="boton">Llegó</span> en ese producto</td></tr>
     <tr><td>Llegó algo que no estaba en el pedido</td><td>Llegó todo → <span class="boton">+ Llegó algo más</span></td></tr>
     <tr><td>Compra sin pedido (súper, verdulería, envío)</td><td>En camino → <span class="boton">Llegó una compra sin pedido</span></td></tr>
     <tr><td>Un producto no vino</td><td>En Llegó todo: <b>Sigue en camino</b> o <b>No vino</b></td></tr>
-    <tr><td>Pagar una cuenta corriente</td><td>Compras → <b>Pagos</b> → <b>Cuentas por pagar</b></td></tr>
-    <tr><td>Ya se cargó directo en Fudo</td><td>Llegó todo → <b>¿Ya lo cargaron directo en Fudo?</b> (no toquen Llegó)</td></tr>
+    <tr><td>¿Qué Facturas A faltan cargar en Fudo?</td><td>Compras → Recibidos → <b>Facturas para cargar en Fudo</b></td></tr>
+    <tr><td>Pagar una cuenta corriente</td><td>Compras → <b>Pagos</b> → <b>Cuentas por pagar</b> (las Facturas A, en Fudo)</td></tr>
     <tr><td>Me equivoqué al cargar</td><td>Compras → Recibidos → <b>Corregir recepción</b></td></tr>
   </table>
 </section>
@@ -105,62 +106,80 @@
 <h2>Paso a paso</h2>
 
 <section class="tarjeta">
-  <h3><span class="n">1</span> Llegó el pedido de un proveedor</h3>
+  <h3><span class="n">1</span> Llegó mercadería con Factura A</h3>
+  <p style="margin:0 0 4px"><b>En Fudo</b> (quien está en la caja, cuando llega el proveedor o cuando mandan la factura):</p>
+  <ol>
+    <li>Cargá el gasto con el <b>proveedor</b> correcto (el mismo del pedido) y <b>todos los productos</b> con su cantidad y precio.</li>
+    <li>Completá <b>tipo y número de factura</b>, <b>IVA</b>, <b>IIBB</b> y el <b>total</b> tal cual la factura, y cómo se paga.</li>
+  </ol>
+  <p style="margin:8px 0 4px"><b>En Sala de Profes</b> (quien recibe):</p>
+  <ol>
+    <li>En camino → <span class="boton">Llegó</span> (o <span class="boton">Llegó todo</span>) → en <b>Comprobante</b> elegí <b>Factura A</b> y poné el número.</li>
+    <li>Marcá <b>qué llegó y cuánto</b>. No pide precio ni pago. Tocá <b>Llegó (factura en Fudo)</b>.</li>
+  </ol>
+  <div class="ojo">El orden no importa. Si la factura ya está en Fudo, se vincula en el momento; si no, queda en <b>Recibidos → Facturas para cargar en Fudo</b> y se vincula sola cuando la cargan (en menos de 10 minutos).</div>
+  <p class="fudo">El <b>stock entra con la factura en Fudo</b>: por eso tiene que tener <b>los productos</b>. Si se carga solo el total, no suma stock y no se vincula sola: en Facturas para cargar en Fudo → <b>Ya está en Fudo</b> se elige a mano.</p>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">2</span> Llegó el pedido de un proveedor (ticket, Factura B o C)</h3>
   <ol>
     <li>Compras → <b>En camino</b> → en el proveedor, tocá <span class="boton">Llegó todo</span>.</li>
-    <li>En cada producto: la <b>cantidad que llegó</b> y el <b>$ total</b> de esa línea, como figura en la factura (con Factura A, <b>sin IVA</b>).</li>
+    <li><b>Comprobante</b>, número y <b>categoría del gasto</b>.</li>
+    <li><b>¿Cómo se paga?</b></li>
+    <li>En cada producto: la <b>cantidad que llegó</b> y el <b>$ total</b> de esa línea, como figura en el comprobante.</li>
     <li>Lo que no llegó: tocá el tilde del producto y elegí <b>Sigue en camino</b> (va a venir) o <b>No vino</b> (se cierra, sin stock ni gasto).</li>
     <li>Si vino algo que no estaba en el pedido: <span class="boton">+ Llegó algo más</span>.</li>
-    <li><b>¿Cómo se paga?</b> y <b>Datos del gasto</b>: categoría, comprobante, número y, si es Factura A, IVA e IIBB.</li>
-    <li><b>Total de la factura</b> (opcional): si lo ponen, en Fudo queda exactamente ese total. <b>Ya incluye los impuestos</b>: no hace falta que cierre con los productos.</li>
+    <li><b>Total de la factura</b> (opcional): si lo ponen, en Fudo queda exactamente ese total.</li>
     <li>Tocá <b>Confirmar</b>.</li>
   </ol>
-  <p class="fudo">En Fudo queda <b>un solo gasto</b> del proveedor, con <b>un renglón por producto</b> y el <b>total a pagar</b>. El stock se suma una sola vez.</p>
+  <p class="fudo">En Fudo queda <b>un solo gasto</b> del proveedor, con <b>un renglón por producto</b>. El stock se suma una sola vez.</p>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">2</span> Llegó un solo producto</h3>
+  <h3><span class="n">3</span> Llegó un solo producto</h3>
   <ol>
     <li>En camino → tocá <span class="boton">Llegó</span> en ese producto.</li>
-    <li><b>Cantidad recibida</b> y <b>Total pagado</b> (con Factura A dice <b>"Total sin IVA"</b>). El vencimiento es opcional.</li>
-    <li><b>¿Cómo se paga?</b> y <b>Datos del gasto</b>, y <b>Confirmar llegada</b>.</li>
+    <li><b>Comprobante</b> y número (si es <b>Factura A</b>, ver el punto 1).</li>
+    <li><b>¿Cómo se paga?</b>, <b>Cantidad recibida</b> y <b>Total pagado</b>. El vencimiento es opcional.</li>
+    <li><b>Confirmar llegada</b>.</li>
   </ol>
-  <div class="ojo">Si esa factura trae otros productos que cargan aparte, usen <b>el mismo número de comprobante y la misma forma de pago</b>: se suman al mismo gasto y el IVA no se repite.</div>
+  <div class="ojo">Si ese comprobante trae otros productos que cargan aparte, usen <b>el mismo número y la misma forma de pago</b>: se suman al mismo gasto.</div>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">3</span> Compra sin pedido (súper, verdulería, envío)</h3>
+  <h3><span class="n">4</span> Compra sin pedido (súper, verdulería, envío)</h3>
   <ol>
     <li>En camino → <span class="boton">Llegó una compra sin pedido</span>.</li>
     <li>Elegí <b>¿De qué proveedor?</b> y cargá lo que vino: producto, cantidad y $ total.</li>
-    <li>Igual que siempre: <b>¿Cómo se paga?</b>, <b>Datos del gasto</b> y <b>Confirmar</b>.</li>
+    <li>Igual que siempre: <b>Comprobante</b>, <b>¿Cómo se paga?</b> y <b>Confirmar</b>.</li>
   </ol>
   <div class="ojo">Si el proveedor no aparece, primero agréguenlo en Fudo y después toquen <b>Proveedores → Sync Fudo</b> en la app.</div>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">4</span> El producto no aparece</h3>
+  <h3><span class="n">5</span> El producto no aparece</h3>
   <ul>
-    <li>Si está en Fudo pero no en la app: al buscarlo aparece <b>"está en Fudo · traer a stock"</b>. Tocalo y se crea al momento.</li>
-    <li>Si <b>está en Fudo pero no aparece</b>: en Fudo tiene que tener el <b>control de stock prendido</b> y, si es un producto (pastelería, bebidas, descartables), el <b>stock cargado</b>. Al día siguiente aparece solo en la app. No lo creen de nuevo: quedaría duplicado y sin detalle en el gasto.</li>
+    <li>Si está en Fudo pero no en la app: al buscarlo aparece <b>"está en Fudo · traer a stock"</b>. Tocalo y se crea al momento (también los insumos con el control de stock apagado).</li>
+    <li>Si es un <b>producto</b> de Fudo (bebidas, pastelería, descartables) y no aparece: en Fudo tiene que tener el <b>control de stock prendido</b>.</li>
     <li>Al armar un pedido, <b>elijan el producto de la lista</b> en vez de escribirlo: escrito a mano queda "sin insumo" y no suma stock.</li>
-    <li>Si no está en Fudo (vasos, limpieza…): <b>Crear «…» como producto nuevo</b>. Si es un insumo que se usa en recetas, créenlo en Fudo primero.</li>
+    <li>Si no está en Fudo (vasos, limpieza…): <b>Crear «…» como producto nuevo</b>. Si ya existe en Fudo con ese nombre, la app lo vincula a ese en vez de duplicarlo.</li>
     <li>Si es un producto (gaseosa, descartable) y no aparece al armar un pedido, le falta el proveedor: <b>Proveedores → Vínculos y días de pedido</b>.</li>
   </ul>
   <p class="fudo">Si un renglón queda <b>"sin insumo"</b>, no suma stock ni en la app ni en Fudo: elijan el insumo sugerido.</p>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">5</span> Tipo de comprobante e impuestos</h3>
+  <h3><span class="n">6</span> Tipo de comprobante</h3>
   <table>
-    <tr><td><b>Factura A</b> (IVA discriminado)</td><td>Cada producto <b>sin IVA</b>. IVA e IIBB en Datos del gasto. A Fudo va el <b>total a pagar</b> y en la app queda un recibo <b>"Impuestos de la factura"</b>.</td></tr>
-    <tr><td><b>Factura B, C o ticket</b></td><td>El importe de cada producto <b>tal cual figura</b> (ya trae el IVA). No hay campo de IVA.</td></tr>
-    <tr><td><b>Sin comprobante</b></td><td>Igual, el importe que se pagó. Solo para lo que realmente no tiene comprobante.</td></tr>
+    <tr><td><b>Factura A</b> (IVA discriminado)</td><td>Se carga en <b>Fudo</b>, con IVA, IIBB y total. En la app, solo <b>Llegó</b> (punto 1).</td></tr>
+    <tr><td><b>Factura B, C o ticket</b></td><td>En la app, el importe de cada producto <b>tal cual figura</b> (ya trae el IVA).</td></tr>
+    <tr><td><b>Sin comprobante</b></td><td>En la app, el importe que se pagó. Solo para lo que realmente no tiene comprobante.</td></tr>
   </table>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">6</span> Cómo se paga</h3>
+  <h3><span class="n">7</span> Cómo se paga</h3>
   <table>
     <tr><td><b>Efectivo</b></td><td>Sale de la caja: en Fudo entra en la <b>Caja 1</b> y lo descuenta el <b>arqueo</b>.</td></tr>
     <tr><td><b>Transferencia / Tarjeta</b></td><td>Queda pagado con ese medio.</td></tr>
@@ -169,40 +188,38 @@
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">7</span> Pagar una cuenta corriente</h3>
+  <h3><span class="n">8</span> Pagar una cuenta corriente</h3>
   <ol>
     <li>Un recibo suelto: Compras → <b>Pagos</b> → <b>Pagar</b> en ese recibo.</li>
     <li>Varias facturas de un proveedor: Pagos → <b>Cuentas por pagar</b> → <b>Saldar…</b> en el proveedor, y elegí <b>Todo</b> o <b>hasta la compra del</b> (una fecha). Antes de confirmar muestra cuántos recibos y el monto.</li>
     <li>Elegí cómo se paga (efectivo, transferencia o tarjeta). El pago va a Fudo y la deuda baja.</li>
-    <li>Si la factura tiene un recibo de <b>Impuestos de la factura</b>, se paga también: es parte del total.</li>
   </ol>
-  <div class="ojo">Páguenlo desde la app, no en Fudo: si lo pagan en los dos lados queda pagado dos veces.</div>
+  <div class="ojo">Lo cargado desde la app se paga desde la app, no en Fudo: si lo pagan en los dos lados queda pagado dos veces. <b>Las Facturas A se cargan y se pagan en Fudo.</b></div>
   <p class="fudo">Para armar el pago de la semana: Cuentas por pagar → <b>Resumen para pagar</b> (semana pasada, esta semana, todo o elegir fechas) → <b>Descargar Excel</b> o <b>Copiar resumen</b>.</p>
 </section>
 
 <section class="tarjeta">
-  <h3><span class="n">8</span> Me equivoqué</h3>
+  <h3><span class="n">9</span> Me equivoqué</h3>
   <ol>
     <li>Compras → <b>Recibidos</b> → en esa compra, <b>Corregir recepción</b>.</li>
     <li>Ahí se corrige la <b>cantidad</b> (ajusta el stock en la app y en Fudo) o el <b>monto</b>, o se anula todo con <b>Anular recepción completa</b>.</li>
-    <li><b>Después, en Fudo:</b> si cambiaron el monto, corríjanlo también en el gasto; si anularon la compra, <b>anulen el gasto</b>. La app no cambia ni anula el gasto de Fudo sola.</li>
+    <li><b>Fudo se corrige solo:</b> si cambian el monto, cambia el gasto (y el pago o la deuda); si anulan, se anula el gasto, o se le saca ese producto si la factura tenía más.</li>
   </ol>
-  <div class="ojo">No la carguen de nuevo "para arreglarla" sin anular la primera: queda doble.</div>
-  <p class="fudo"><b>Si una compra ya se cargó directo en Fudo</b> (con los productos, Fudo ya sumó el stock): <b>no toquen Llegó</b>. En Llegó todo del proveedor → <b>¿Ya lo cargaron directo en Fudo?</b> → elegí el gasto → <b>Cerrar con ese gasto</b>. Cierra el pedido sin sumar stock ni crear otro gasto.</p>
+  <div class="ojo">No la carguen de nuevo "para arreglarla" sin anular la primera: queda doble. <b>Una Factura A</b> (cargada en Fudo) se corrige o anula <b>en Fudo</b>.</div>
 </section>
 
 <section class="tarjeta mal">
   <h3>Lo que desordena Fudo (evitar)</h3>
   <ul>
-    <li>Cargar la misma compra en la app <b>y</b> en Fudo.</li>
-    <li>Con Factura A, poner los productos <b>con IVA</b> y además cargar el IVA (queda dos veces).</li>
-    <li>Cargar una factura en partes con <b>números distintos</b> o con <b>otra forma de pago</b>.</li>
-    <li>Pagar una cuenta corriente en Fudo en vez de en la app.</li>
+    <li>Cargar en Fudo un ticket o compra que ya se cargó en la app (queda doble).</li>
+    <li>Cargar una Factura A en Fudo <b>sin los productos</b> o con <b>otro proveedor</b>: no suma stock ni se vincula sola.</li>
+    <li>Cargar un comprobante en partes con <b>números distintos</b> o con <b>otra forma de pago</b>.</li>
+    <li>Pagar en Fudo una cuenta corriente que se cargó en la app.</li>
     <li>Dejar productos "sin insumo" cuando el insumo existe.</li>
   </ul>
 </section>
 
-<p class="pie">¿Una situación que no está acá? Avisen y la sumamos. · Actualizada el 28/10/2026</p>
+<p class="pie">¿Una situación que no está acá? Avisen y la sumamos. · Actualizada el 29/10/2026</p>
 </main>
 </body>
 </html>
