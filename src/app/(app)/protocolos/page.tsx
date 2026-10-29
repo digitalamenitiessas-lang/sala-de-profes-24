@@ -338,8 +338,14 @@ function AsignarDialog({ tarea, protocolo, yoId, onClose, onDone }: {
 
 function EnlaceCarga({ p, className }: { p: ProtocoloUI; className?: string }) {
   if (!p.enlace_url) return null
+  // Control de descartables: directo a los vasos y tapas (los que pide para
+  // cerrar). El conteo muestra solo lo que "toca" y los contados el lunes no
+  // aparecían el jueves.
+  const href = p.registro === 'conteo_descartables' && p.enlace_url.startsWith('/stock/conteo') && !p.enlace_url.includes('buscar=')
+    ? `${p.enlace_url}${p.enlace_url.includes('?') ? '&' : '?'}buscar=vaso`
+    : p.enlace_url
   return (
-    <Link href={p.enlace_url} className={cn('flex items-center justify-center gap-2 rounded-xl bg-[#006d5a] px-3 py-2.5 text-[13.5px] font-bold text-white', className)}>
+    <Link href={href} className={cn('flex items-center justify-center gap-2 rounded-xl bg-[#006d5a] px-3 py-2.5 text-[13.5px] font-bold text-white', className)}>
       <ClipboardList className="size-4" /> {p.enlace_texto || 'Cargar'}
     </Link>
   )
