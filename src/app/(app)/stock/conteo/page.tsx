@@ -21,7 +21,8 @@ import { coincideBusqueda } from '@/lib/buscar'
 //                        semanal, descartables quincenal), negativos siempre.
 //   modo=cero          : puesta a cero — intermedios y negativos primero,
 //                        después todo lo vinculado a Fudo.
-// ?area=cocina|pasteleria|barra|descartables|limpieza filtra el recorrido.
+// ?area=cocina|pasteleria|barra|descartables|limpieza filtra el recorrido;
+// ?buscar=vaso abre con la lupa escrita (todo lo que coincide, toque o no).
 // ---------------------------------------------------------------------------
 
 type Item = {
@@ -81,8 +82,11 @@ function ConteoContent() {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [showAll, setShowAll] = useState(false)
-  // Lupa: con algo escrito busca en TODO lo del área (le toque hoy o no)
-  const [busqueda, setBusqueda] = useState('')
+  // Lupa: con algo escrito busca en TODO lo del área (le toque hoy o no).
+  // ?buscar= la trae escrita: "Contar los vasos" del control de descartables
+  // abre con "vaso" (los vasos contados el lunes no "tocaban" el jueves y la
+  // tarea no se podía cerrar).
+  const [busqueda, setBusqueda] = useState(() => params.get('buscar') ?? '')
   const q = busqueda.trim()
   const [inputs, setInputs] = useState<Record<string, string>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
