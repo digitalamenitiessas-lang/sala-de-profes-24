@@ -11,6 +11,8 @@ import { parseQty } from './shared'
 // hace el análisis de fin de mes) y comprobante. Categoría, tipo y número van
 // a Fudo; IVA e IIBB (Factura A) se suman al gasto de Fudo (total a pagar) y
 // quedan en un recibo "Impuestos de la factura" (ver lib/compras/datos-gasto).
+// Con Factura A muestra el total a pagar (sin IVA + IVA + IIBB): solo se veía
+// el neto y el IVA por separado.
 // ---------------------------------------------------------------------------
 
 export function useDatosGasto(supplierId: string | null | undefined) {
@@ -23,8 +25,10 @@ export function useDatosGasto(supplierId: string | null | undefined) {
   // Número de la última carga de HOY de este proveedor (misma factura)
   // Número de la última factura de hoy, con el proveedor al que pertenece: si
   // se cambia de proveedor no queda el de otro mientras llega la respuesta.
-  const [anterior, setAnterior] = useState<{ supplierId: string | null; numero: string } | null>(null)
-  const numeroAnterior = anterior && anterior.supplierId === (supplierId ?? null) ? anterior.numero : null
+  const [anterior, setAnterior] = useState<{ supplierId: string | null; numero: string; acumulado: Acumulado | null } | null>(null)
+  const delProveedor = anterior && anterior.supplierId === (supplierId ?? null) ? anterior : null
+  const numeroAnterior = delProveedor?.numero ?? null
+  const acumuladoAnterior = delProveedor?.acumulado ?? null
   const [iva, setIva] = useState('')
   const [iibb, setIibb] = useState('')
 
@@ -42,7 +46,7 @@ export function useDatosGasto(supplierId: string | null | undefined) {
         // El número NO se precarga: con el mismo número la compra se suma al
         // gasto anterior en Fudo, y eso tiene que decidirlo una persona (botón
         // "Usar ese número" abajo del campo).
-        setAnterior(typeof d.ultima?.numero === 'string' && d.ultima.numero ? { supplierId: supplierId ?? null, numero: d.ultima.numero } : null)
+        setAnterior(typeof d.ultima?.numero === 'string' && d.ultima.numero ? { supplierId: supplierId ?? null, numero: d.ultima.numero, acumulado: d.acumulado ?? null } : null)
       })
       .catch(() => { if (alive) setErrorFudo('No se pudieron traer las categorías') })
       .finally(() => { if (alive) setCargando(false) })
@@ -65,14 +69,30 @@ export function useDatosGasto(supplierId: string | null | undefined) {
 
   return {
     datos, falta,
-    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb },
+    campos: { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, acumuladoAnterior, iva, setIva, iibb, setIibb },
   }
 }
 
+/** Lo que ya tiene cargado hoy la última factura del proveedor (GET /api/compras/datos-gasto) */
+type Acumulado = { total: number; productos: number; iva: number; iibb: number; sinDetallar: number }
+
+const money = (n: number) => n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none'
 
-export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDatosGasto>['campos'] }) {
-  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, iva, setIva, iibb, setIibb } = campos
+export function DatosGastoFields({ campos, neto, totalFactura }: {
+  campos: ReturnType<typeof useDatosGasto>['campos']
+  /** Importe sin IVA de lo que se está cargando (para el total a pagar) */
+  neto?: number | null
+  /** "Llegó todo" con el total de la factura: ya incluye los impuestos */
+  totalFactura?: number | null
+}) {
+  const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior, acumuladoAnterior, iva, setIva, iibb, setIibb } = campos
+  const n = (v: string) => { const x = parseQty(v); return Number.isFinite(x) && x > 0 ? x : 0 }
+  const netoCarga = neto != null && Number.isFinite(neto) && neto > 0 ? neto : 0
+  // Misma factura que la carga anterior de hoy: sus impuestos ya están (van con
+  // el primer producto) y este producto se suma a ese gasto
+  const mismaFactura = !!numeroAnterior && numero.trim() === numeroAnterior && !!acumuladoAnterior
   return (
     <div className="space-y-2.5 rounded-xl bg-[#faf8f5] p-3">
       <label className="block">
@@ -140,7 +160,23 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
         </div>
       )}
 
-      {comprobante === 'factura_a' && (
+      {comprobante === 'factura_a' && mismaFactura && acumuladoAnterior && (
+        <div className="space-y-1">
+          <p className="text-[10.5px] text-[#7d6c64]">
+            El IVA y el IIBB van con el primer producto de la factura
+            {acumuladoAnterior.iva + acumuladoAnterior.iibb > 0
+              ? <> (ya cargados: {[acumuladoAnterior.iva > 0 ? `IVA ${money(acumuladoAnterior.iva)}` : null, acumuladoAnterior.iibb > 0 ? `IIBB ${money(acumuladoAnterior.iibb)}` : null].filter(Boolean).join(' · ')}).</>
+              : <>. En la primera carga no se pusieron: avisale a un encargado para corregirlo.</>}
+          </p>
+          <TotalAPagar
+            total={acumuladoAnterior.sinDetallar >= netoCarga ? acumuladoAnterior.total : acumuladoAnterior.total + netoCarga}
+            detalle={`Ya cargado: ${money(acumuladoAnterior.total)} (${acumuladoAnterior.productos} producto${acumuladoAnterior.productos === 1 ? '' : 's'}, con impuestos)${netoCarga > 0 ? ` + este producto ${money(netoCarga)}` : ''}${acumuladoAnterior.sinDetallar >= netoCarga && netoCarga > 0 ? ' (sale del importe sin detallar)' : ''}`}
+            titulo="Total de la factura"
+          />
+        </div>
+      )}
+
+      {comprobante === 'factura_a' && !mismaFactura && (
         <>
           <div className="grid grid-cols-2 gap-2">
             {([['IVA', iva, setIva], ['IIBB', iibb, setIibb]] as const).map(([label, value, setter]) => (
@@ -154,8 +190,28 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
             ))}
           </div>
           <p className="text-[10.5px] text-[#a39e97]">Se suman al gasto de Fudo para que quede el total a pagar (detallados en la descripción). El costo de los productos queda sin IVA. Si ponés el total de la factura, ya los incluye.</p>
+          {totalFactura != null && totalFactura > 0 ? (
+            <TotalAPagar total={totalFactura} detalle="Es el total de la factura: ya incluye IVA e IIBB" />
+          ) : netoCarga + n(iva) + n(iibb) > 0 && (
+            <TotalAPagar
+              total={netoCarga + n(iva) + n(iibb)}
+              detalle={[`Sin IVA ${money(netoCarga)}`, n(iva) > 0 ? `IVA ${money(n(iva))}` : null, n(iibb) > 0 ? `IIBB ${money(n(iibb))}` : null].filter(Boolean).join(' + ')}
+            />
+          )}
         </>
       )}
+    </div>
+  )
+}
+
+function TotalAPagar({ total, detalle, titulo = 'Total a pagar' }: { total: number; detalle: string; titulo?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 ring-1 ring-[#cfe5de]">
+      <div className="min-w-0">
+        <p className="text-[12px] font-semibold text-[#3d2c24]">{titulo}</p>
+        <p className="text-[10.5px] text-[#7d6c64]">{detalle}</p>
+      </div>
+      <p className="shrink-0 text-[15px] font-bold text-[#006d5a]">{money(Math.round(total * 100) / 100)}</p>
     </div>
   )
 }

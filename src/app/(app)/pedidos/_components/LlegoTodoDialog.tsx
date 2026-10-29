@@ -476,7 +476,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
             </div>
           </div>
 
-          <DatosGastoFields campos={datosGasto.campos} />
+          <DatosGastoFields campos={datosGasto.campos} neto={sumaProductos} totalFactura={facturaYaCargada ? null : facturaNum} />
 
           {/* Factura y nota general */}
           <div className="space-y-2 rounded-xl bg-[#faf8f5] p-3">

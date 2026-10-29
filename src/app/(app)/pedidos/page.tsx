@@ -1368,6 +1368,10 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
   }
   const typedUnit = parseTypedUnit(receivedQty)
   const qtyNormalized = normalizedQtyFrom(receivedQty)
+  // Importe sin IVA de esta carga, para el "Total a pagar" de la Factura A
+  const netoCarga = mode === 'sin_stock'
+    ? montoSinStock
+    : parseQty(totalCost) > 0 ? parseQty(totalCost) : parseQty(unitCost) * (qtyNormalized ?? 0)
   // Unidad tipeada NO convertible a la del insumo → no autocalcular, avisar
   const qtyUnitIncompatible = Boolean(
     selectedStock && typedUnit && Number.isFinite(qtyNum) && qtyNum > 0 && qtyNormalized == null,
@@ -1690,7 +1694,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
             </div>
           )}
 
-          <DatosGastoFields campos={datosGasto.campos} />
+          <DatosGastoFields campos={datosGasto.campos} neto={netoCarga} />
 
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Nota (opcional): faltó algo, vino distinto…" className="w-full resize-none rounded-xl border border-[#ebe6df] bg-white px-3 py-2 text-sm text-[#3d2c24] placeholder:text-[#c4bdb7] focus:border-[#006d5a] focus:outline-none" />
         </div>
