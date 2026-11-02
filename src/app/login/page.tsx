@@ -102,7 +102,9 @@ export default function LoginPage() {
       }
 
       toast.success('Bienvenido de vuelta!')
-      router.push('/')
+      // Solo se vuelve a la pantalla de permiso del conector: nunca a una dirección arbitraria
+      const next = new URLSearchParams(window.location.search).get('next')
+      router.push(next?.startsWith('/mcp/autorizar?') ? next : '/')
       router.refresh()
     } catch {
       toast.error('Error inesperado. Intenta de nuevo.')

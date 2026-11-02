@@ -16,6 +16,17 @@ const nextConfig: NextConfig = {
   // El PDF de la liquidación (@react-pdf) se carga tal cual en el servidor:
   // sus paquetes solo exponen ESM y no se llevan bien con el empaquetado.
   serverExternalPackages: ['@react-pdf/renderer'],
+  // La pantalla de permiso del conector no se puede meter en un iframe de otro sitio
+  async headers() {
+    return [{
+      source: '/mcp/:path*',
+      headers: [
+        { key: 'X-Frame-Options', value: 'DENY' },
+        { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+        { key: 'Referrer-Policy', value: 'no-referrer' },
+      ],
+    }]
+  },
 };
 
 export default nextConfig;

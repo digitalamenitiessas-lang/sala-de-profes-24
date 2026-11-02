@@ -40,6 +40,8 @@ export async function middleware(request: NextRequest) {
   if (!user && !isPublicRoute && !authUnavailable) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
+    // El permiso del conector de Claude vuelve a su pantalla después del login
+    if (pathname === '/mcp/autorizar') url.search = `?next=${encodeURIComponent(pathname + request.nextUrl.search)}`
     return NextResponse.redirect(url)
   }
 
@@ -88,7 +90,8 @@ export const config = {
      * - public files (public folder)
      * - fonts/ y brand/: el PDF de la liquidación los lee desde el servidor
      *   sin sesión (si redirigen a /login, el PDF no se puede armar)
+     * - .well-known/: Claude lee ahí los metadatos OAuth del conector, sin sesión
      */
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|icons/|Logos/|fonts/|brand/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ttf|woff|woff2)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|offline.html|icons/|Logos/|fonts/|brand/|\\.well-known/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ttf|woff|woff2)$).*)',
   ],
 }
