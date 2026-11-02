@@ -51,6 +51,12 @@ export function validarPedido(p: Record<string, string | undefined>): { ok: true
   return { ok: true, pedido: { clientId: p.client_id, redirectUri: p.redirect_uri, codeChallenge: p.code_challenge!, state: p.state || null, scope: SCOPE } }
 }
 
+/** Nombre para la auditoría */
+export async function nombreDe(admin: SupabaseClient, userId: string): Promise<string | null> {
+  const { data } = await admin.from('profiles').select('first_name, last_name').eq('id', userId).maybeSingle()
+  return [data?.first_name, data?.last_name].filter(Boolean).join(' ') || null
+}
+
 /** ¿Es un socio activo? */
 export async function esSocioActivo(admin: SupabaseClient, userId: string): Promise<boolean> {
   const { data } = await admin.from('profiles').select('role, is_active').eq('id', userId).maybeSingle()

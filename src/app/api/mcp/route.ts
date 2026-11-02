@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { autenticarBearer, METADATA_RECURSO, SCOPE } from '@/lib/mcp/oauth'
+import { autenticarBearer, METADATA_RECURSO, nombreDe, SCOPE } from '@/lib/mcp/oauth'
 import { crearServidorFudo } from '@/lib/mcp/fudo-servidor'
 import { logAudit } from '@/lib/audit'
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
 
   const server = crearServidorFudo(async (herramienta, args) => {
     await logAudit(admin, {
-      userId, userName: null, action: 'mcp_fudo_consulta', module: 'configuracion', entityType: 'mcp', entityId: herramienta,
+      userId, userName: await nombreDe(admin, userId), action: 'mcp_fudo_consulta', module: 'configuracion', entityType: 'mcp', entityId: herramienta,
       description: `Claude consultó Fudo: ${herramienta}`, metadata: { args },
     }).catch(() => {})
   })

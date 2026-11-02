@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { crearCodigo, esSocioActivo, MCP_BASE, validarPedido } from '@/lib/mcp/oauth'
+import { crearCodigo, esSocioActivo, MCP_BASE, nombreDe, validarPedido } from '@/lib/mcp/oauth'
 import { logAudit } from '@/lib/audit'
 
 // POST /api/mcp/oauth/authorize — el botón de la pantalla /mcp/autorizar.
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   destino.searchParams.set('code', await crearCodigo(admin, user.id, v.pedido))
   await logAudit(admin, {
-    userId: user.id, userName: null, action: 'mcp_fudo_autorizado', module: 'configuracion', entityType: 'mcp', entityId: 'fudo',
+    userId: user.id, userName: await nombreDe(admin, user.id), action: 'mcp_fudo_autorizado', module: 'configuracion', entityType: 'mcp', entityId: 'fudo',
     description: `Autorizó a Claude (${destino.hostname}) a leer los datos de Fudo`,
   }).catch(() => {})
   return NextResponse.redirect(destino, 303)
