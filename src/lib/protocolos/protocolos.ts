@@ -8,7 +8,8 @@ import { ROLES_ENCARGADO_TURNO, turnoEnCurso, turnosDelDia } from '@/lib/turnos/
 // ---------------------------------------------------------------------------
 // Ciclo de cada tarea (un horario de un día):
 //   hora         → si el protocolo tiene puesto automático (tolva → barista) y
-//                  hay alguien fichado con ese puesto, se le asigna sola;
+//                  hay alguien con turno de ese puesto a esa hora (fichado o
+//                  no), se le asigna sola;
 //                  si no, aviso al encargado de turno: "asigná a alguien"
 //   hora + 15'   → si sigue sin asignar, se vuelve a avisar
 //   asignada+30' → si no está hecha, recordatorio a quien la tiene (y a quien asignó)
@@ -30,7 +31,7 @@ export type Protocolo = {
   dias?: number[] | null
   /** La tarea no sale por horario: aparece cuando se termina una producción (conteo de elaborados) */
   al_terminar_produccion?: boolean | null
-  /** A su hora se asigna sola a quien esté fichado con este puesto (ej. tolva → barista). null = la asigna el encargado */
+  /** A su hora se asigna sola a quien tenga turno con este puesto (ej. tolva → barista). null = la asigna el encargado */
   asignar_auto_rol?: string | null
 }
 
@@ -221,17 +222,18 @@ export async function procesarAvisos(admin: SupabaseClient, ahora = new Date()):
   const t0 = ahora.getTime()
 
   /**
-   * Tarea con puesto automático: se la asigna a quien esté FICHADO con ese
-   * puesto y turno a esa hora (no a quien todavía no llegó). Si hay varios, a
-   * quien le tocaron menos de este protocolo hoy. false = no había nadie.
+   * Tarea con puesto automático: se la asigna a quien tenga turno de ese
+   * puesto a esa hora, aunque todavía no haya fichado (pedido del local,
+   * 3/11: la tolva de las 07:00 quedaba sin asignar si el barista fichaba
+   * tarde). Si hay varios: primero el que ya fichó, después a quien le
+   * tocaron menos de este protocolo hoy. false = no había nadie.
    */
   const asignarSola = async (t: Tarea, p: Protocolo | undefined): Promise<boolean> => {
     if (!p?.asignar_auto_rol) return false
     personal ??= await personalDeTurno(admin, fecha, ahora)
     const yaLeTocaron = (id: string) => delDia.filter((x) => x.protocolo_id === t.protocolo_id && x.asignado_a === id).length
     const elegido = candidatosPara(personal, t, ahora, [p.asignar_auto_rol])
-      .filter((c) => c.presente)
-      .sort((a, b) => yaLeTocaron(a.id) - yaLeTocaron(b.id) || a.nombre.localeCompare(b.nombre, 'es'))[0]
+      .sort((a, b) => Number(b.presente) - Number(a.presente) || yaLeTocaron(a.id) - yaLeTocaron(b.id) || a.nombre.localeCompare(b.nombre, 'es'))[0]
     if (!elegido) return false
     // Solo si sigue sin asignar (el encargado pudo haberla asignado recién)
     const { data } = await admin.from('protocolo_tareas').update({

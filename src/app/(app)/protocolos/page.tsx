@@ -37,7 +37,7 @@ type ProtocoloUI = {
   /** Sale al terminar una producción, no por horario */
   al_terminar_produccion?: boolean | null
   medicion_etiqueta?: string | null; medicion_unidad?: string | null; registro?: string | null; roles?: string[] | null
-  /** A su hora se asigna sola a quien esté fichado con este puesto */
+  /** A su hora se asigna sola a quien tenga turno con este puesto */
   asignar_auto_rol?: string | null
   /** Pantalla donde se carga lo que pide la tarea (ej. el conteo de elaborados) */
   enlace_url?: string | null; enlace_texto?: string | null
@@ -526,7 +526,7 @@ function ConfigDialog({ p, onClose, onDone }: { p: ProtocoloUI; onClose: () => v
             <input type="time" value={nuevaHora} onChange={(e) => setNuevaHora(e.target.value)} className="flex-1 rounded-lg border border-[#ebe6df] px-2 py-1.5 text-[13px]" />
             <button disabled={!nuevaHora || horarios.includes(nuevaHora)} onClick={() => { setHorarios((x) => [...x, nuevaHora].sort()); setNuevaHora('') }} className="flex items-center gap-1 rounded-lg bg-[#3d2c24] px-3 text-[12.5px] font-semibold text-white disabled:opacity-40"><Plus className="size-3.5" /> Agregar</button>
           </div>
-          <p className="mt-1 text-[11.5px] text-[#7d6c64]">{autoRol ? `A cada horario se asigna sola a quien esté fichado de ${autoRol}; si no hay nadie, le llega el aviso al encargado de turno.` : 'A cada horario le llega el aviso al encargado de turno.'} Cambia desde hoy.</p>
+          <p className="mt-1 text-[11.5px] text-[#7d6c64]">{autoRol ? `A cada horario se asigna sola a quien tenga turno de ${autoRol} a esa hora (primero al que ya fichó); si no hay nadie, le llega el aviso al encargado de turno.` : 'A cada horario le llega el aviso al encargado de turno.'} Cambia desde hoy.</p>
         </div>
 
         <div>
