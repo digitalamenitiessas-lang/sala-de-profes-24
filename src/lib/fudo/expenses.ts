@@ -63,6 +63,24 @@ export type FudoExpense = {
   status: string | null
   /** Pagos vigentes con su medio (la deuda en Cta. Cte. es un pago con ese medio) */
   pagos: { amount: number; paymentMethodId: string | null }[]
+  /** Cuándo se cargó en Fudo (ISO). `date` es el primer pago: si se pagó después, es el día del pago */
+  creado: string | null
+  /** Fecha de la factura que pusieron a mano (YYYY-MM-DD; puede venir mal, ej. 2020) */
+  fechaFactura: string | null
+}
+
+/**
+ * Día de la compra (YYYY-MM-DD, Argentina): la fecha de la factura si es
+ * razonable (hasta 45 días antes de cargarla, nunca después); si no, el día
+ * en que se cargó. Antes se usaba el día del primer pago: una compra en Cta.
+ * Cte. pagada días después quedaba con la fecha del pago.
+ */
+export function diaDeCompra(g: Pick<FudoExpense, 'creado' | 'fechaFactura' | 'date'>): string {
+  const dia = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' })
+  const cargado = g.creado ? dia(g.creado) : dia(g.date)
+  const f = g.fechaFactura && /^\d{4}-\d{2}-\d{2}$/.test(g.fechaFactura) ? g.fechaFactura : null
+  if (f && f <= cargado && Date.parse(`${cargado}T12:00:00Z`) - Date.parse(`${f}T12:00:00Z`) <= 45 * 86_400_000) return f
+  return cargado
 }
 
 type JsonApiRes = {
@@ -151,7 +169,7 @@ export async function fetchFudoExpensesConMeta(
         // ni precio de los renglones, y sin fields[expense] no manda monto ni
         // estado (el importador leía todo en 0 y no traía nada, 4/11)
         `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product`
-        + '&fields[expense]=amount,status,canceled,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
+        + '&fields[expense]=amount,status,canceled,createdAt,date,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
         + `&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
@@ -251,6 +269,8 @@ export async function fetchFudoExpensesConMeta(
       montoGasto: Math.round((Number(exp.attributes?.amount ?? amount) || 0) * 100) / 100,
       status: typeof exp.attributes?.status === 'string' ? exp.attributes.status : null,
       pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId })),
+      creado: typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : null,
+      fechaFactura: typeof exp.attributes?.date === 'string' ? exp.attributes.date.slice(0, 10) : null,
     })
   }
 

@@ -44,7 +44,9 @@ const ddmm = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { timeZo
 export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number; sinPrecio: number; gastosFudo: number; importacion?: ResumenImportacion }> {
   const out = { pedidos: 0, producciones: 0, recetas: 0, sinPrecio: 0, gastosFudo: 0 }
   const hora = Number(ahora.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
-  if (hora < 10 || hora >= 20) return out
+  // Fuera de hora no se avisa nada, pero las compras cargadas en Fudo se
+  // importan igual (una de la noche esperaba hasta las 10 para aparecer)
+  if (hora < 10 || hora >= 20) return { ...out, importacion: await importarGastosManuales(admin) }
   const hoy = fechaOperativa(ahora)
   let para: string[] | null = null
   const getPara = async () => (para ??= await destinatarios(admin, ahora))
@@ -239,7 +241,7 @@ export async function verificarMarcadosAtiempo(admin: SupabaseClient, ahora = ne
 }
 
 /** Desde cuándo rige "las compras se cargan en la app" (no avisar gastos viejos) */
-const DESDE_COMPRAS_EN_APP = '2026-10-13T03:00:00Z'
+export const DESDE_COMPRAS_EN_APP = '2026-10-13T03:00:00Z'
 
 async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise<number> {
   const desde = new Date(Math.max(Date.parse(DESDE_COMPRAS_EN_APP), ahora.getTime() - 3 * 86_400_000)).toISOString()
@@ -309,7 +311,7 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 // suma stock por Fudo: lo suma la app al cerrar.
 // ---------------------------------------------------------------------------
 
-type ResumenImportacion = { vistos: number; pendientes: number; importados: number; deudas: number; sinVinculo: number; noCierran: string[]; errores: string[]; fallo?: string }
+type ResumenImportacion = { vistos: number; pendientes: number; importados: number; deudas: number; sinVinculo: number; fechasCorregidas: number; noCierran: string[]; errores: string[]; fallo?: string }
 
 /** Por pulso, como mucho (la primera vez quedan muchos atrasados: entran en varios pulsos) */
 const MAX_GASTOS_POR_PULSO = 40
@@ -317,16 +319,18 @@ const MAX_GASTOS_POR_PULSO = 40
 // Devuelve un resumen: queda en la respuesta del pulso (net._http_response)
 // para ver qué hizo sin entrar al servidor.
 async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImportacion> {
-  const resumen: ResumenImportacion = { vistos: 0, pendientes: 0, importados: 0, deudas: 0, sinVinculo: 0, noCierran: [], errores: [] }
+  const resumen: ResumenImportacion = { vistos: 0, pendientes: 0, importados: 0, deudas: 0, sinVinculo: 0, fechasCorregidas: 0, noCierran: [], errores: [] }
 
   // Desde que la app carga compras: con productos (historial, precios y stock)
   // o con deuda en Fudo (Cta. Cte. sin pagar), así "a pagar" de la app da lo
   // mismo que Fudo. Antes eran solo los últimos 3 días y nunca las deudas.
   let gastos: FudoExpense[] = []
   let medioLveDesdeFudo: (id: string) => Promise<string | null>
+  let diaDeCompra: (g: FudoExpense) => string
   try {
     const fudo = await import('@/lib/fudo/expenses')
     medioLveDesdeFudo = fudo.medioLveDesdeFudo
+    diaDeCompra = fudo.diaDeCompra
     gastos = (await fudo.fetchFudoExpenses(DESDE_COMPRAS_EN_APP))
       .filter((g) => g.items.length > 0 || g.productItems.length > 0 || g.status === 'UNPAID')
   } catch (err) {
@@ -346,6 +350,21 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
   const yaEnApp = new Set([...(r ?? []), ...(k ?? []), ...(b ?? [])].map((x: { fudo_expense_id: string | null }) => x.fudo_expense_id))
   const pendientes = gastos.filter((g) => !yaEnApp.has(g.id))
   resumen.pendientes = pendientes.length
+
+  // Lo ya importado con el día del pago en vez del de la compra (hasta el 4/11)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: importados_ } = await (admin.from('stock_receipts') as any)
+    .select('id, fudo_expense_id, received_date').like('note', 'Importado desde Fudo%').in('fudo_expense_id', ids)
+  const gastoPorId = new Map(gastos.map((g) => [g.id, g]))
+  for (const rec of ((importados_ ?? []) as { id: number; fudo_expense_id: string; received_date: string }[]).slice(0, 300)) {
+    const g = gastoPorId.get(String(rec.fudo_expense_id))
+    if (!g) continue
+    const dia = diaDeCompra(g)
+    if (dia !== rec.received_date) {
+      await admin.from('stock_receipts').update({ received_date: dia, received_at: g.creado ?? g.date }).eq('id', rec.id)
+      resumen.fechasCorregidas++
+    }
+  }
 
   if (pendientes.length === 0) return resumen
 
@@ -396,11 +415,12 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
       ...gasto.productItems.map((i) => itemByProdId.get(i.productId)?.id),
     ].filter((x): x is string => Boolean(x)))
     const deEstaFactura = supplierId
-      ? pedidosDeLaFactura(conFacturaPendiente.filter((o) => !cerrados.has(`${o.source}-${o.id}`)), { supplierId, fecha: gasto.date, stockItemIds: itemsDeLaFactura })
+      ? pedidosDeLaFactura(conFacturaPendiente.filter((o) => !cerrados.has(`${o.source}-${o.id}`)), { supplierId, fecha: gasto.creado ?? gasto.date, stockItemIds: itemsDeLaFactura })
       : []
     const pedidoPorItem = new Map(deEstaFactura.filter((o) => o.stock_item_id).map((o) => [o.stock_item_id!, o]))
-    // gasto.date es ISO en UTC: la fecha de la compra es la de Argentina
-    const fechaAR = new Date(gasto.date).toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Tucuman' }) // 'YYYY-MM-DD'
+    // Día de la compra (no el del pago: una Cta. Cte. se paga días después)
+    const fechaAR = diaDeCompra(gasto)
+    const recibidoAt = gasto.creado ?? gasto.date
 
     const renglones = [
       ...gasto.items.map((i) => ({ qty: i.qty, price: i.price, si: itemByIngId.get(i.ingredientId) })),
@@ -438,7 +458,7 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
         cost_per_unit: item.price > 0 ? Math.round((item.price / item.qty) * 10000) / 10000 : null,
         cost_total: item.price > 0 ? redondo(item.price) : null,
         received_date: fechaAR,
-        received_at: gasto.date,
+        received_at: recibidoAt,
         fudo_expense_id: gasto.id,
         ...pago,
         note: `Importado desde Fudo (${proveedor}) — ${pedido ? `factura del pedido «${pedido.product_name}»` : 'entrada directa'}`,
@@ -474,7 +494,7 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
         cost_total: resto,
         cost_per_unit: null,
         received_date: fechaAR,
-        received_at: gasto.date,
+        received_at: recibidoAt,
         fudo_expense_id: gasto.id,
         ...pago,
         note: `Importado desde Fudo (${proveedor}) — ${detalle}`,

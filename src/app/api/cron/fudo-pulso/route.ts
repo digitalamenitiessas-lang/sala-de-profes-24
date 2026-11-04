@@ -6,6 +6,7 @@ import { asegurarVentasDeHoy } from '@/lib/fudo/ventas-intradia'
 import { syncFromFudo } from '@/lib/fudo/stock-sync'
 import { sincronizarMenu } from '@/lib/fudo/menu-sync'
 import { sincronizarPagosDesdeFudo } from '@/lib/compras/pagos-fudo'
+import { controlDiarioCompras } from '@/lib/compras/control-diario'
 import { procesarDescartablesParaLlevar } from '@/lib/stock/descartables'
 import { avisosOperativos, verificarMarcadosAtiempo } from '@/lib/avisos/operativos'
 
@@ -109,9 +110,13 @@ export async function GET(request: NextRequest) {
   if (new Date().getMinutes() < 10) {
     await paso('pagos_fudo', async () => {
       const r = await sincronizarPagosDesdeFudo(admin)
-      return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, errores: r.errores }
+      return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
     })
   }
+
+  // 8. Control de compras contra Fudo: desde las 20, una vez por día (después
+  //    de sincronizar los pagos de esa hora)
+  await paso('control_compras', async () => (await controlDiarioCompras(admin)) ?? 'no toca')
 
   return NextResponse.json({ ok: true, ...out })
 }
