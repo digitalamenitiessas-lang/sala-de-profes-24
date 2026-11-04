@@ -41,7 +41,7 @@ async function reservar(admin: SupabaseClient, clave: string): Promise<boolean> 
 
 const ddmm = (iso: string) => new Date(iso).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' })
 
-export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number; sinPrecio: number; gastosFudo: number }> {
+export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()): Promise<{ pedidos: number; producciones: number; recetas: number; sinPrecio: number; gastosFudo: number; importacion?: ResumenImportacion }> {
   const out = { pedidos: 0, producciones: 0, recetas: 0, sinPrecio: 0, gastosFudo: 0 }
   const hora = Number(ahora.toLocaleString('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hour12: false })) % 24
   if (hora < 10 || hora >= 20) return out
@@ -124,8 +124,8 @@ export async function avisosOperativos(admin: SupabaseClient, ahora = new Date()
 
   // ---- Gastos con insumos cargados directo en Fudo → importar como compras ----
   out.gastosFudo = await gastosManualesEnFudo(admin, ahora)
-  await importarGastosManuales(admin, ahora) // registra la compra y hace releer el stock de Fudo en este pulso
-  return out
+  // Registra la compra y hace releer el stock de Fudo en este pulso
+  return { ...out, importacion: await importarGastosManuales(admin, ahora) }
 }
 
 // ---------------------------------------------------------------------------
@@ -305,18 +305,24 @@ async function gastosManualesEnFudo(admin: SupabaseClient, ahora: Date): Promise
 // suma stock por Fudo: lo suma la app al cerrar.
 // ---------------------------------------------------------------------------
 
-async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<void> {
+type ResumenImportacion = { vistos: number; pendientes: number; importados: number; sinVinculo: number; errores: string[]; fallo?: string }
+
+// Devuelve un resumen: queda en la respuesta del pulso (net._http_response)
+// para ver qué hizo sin entrar al servidor.
+async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promise<ResumenImportacion> {
+  const resumen: ResumenImportacion = { vistos: 0, pendientes: 0, importados: 0, sinVinculo: 0, errores: [] }
   const desde = new Date(Math.max(Date.parse(DESDE_COMPRAS_EN_APP), ahora.getTime() - 3 * 86_400_000)).toISOString()
 
   let gastos: FudoExpense[] = []
   try {
     const { fetchFudoExpenses } = await import('@/lib/fudo/expenses')
     gastos = (await fetchFudoExpenses(desde)).filter((g) => g.items.length > 0 || g.productItems.length > 0)
-  } catch {
-    return // Fudo no respondió
+  } catch (err) {
+    return { ...resumen, fallo: err instanceof Error ? err.message.slice(0, 200) : 'Fudo no respondió' }
   }
+  resumen.vistos = gastos.length
 
-  if (gastos.length === 0) return
+  if (gastos.length === 0) return resumen
 
   // Cuáles ya fueron importados (fudo_expense_id ya existe en stock_receipts)
   const ids = gastos.map((g) => g.id)
@@ -327,8 +333,9 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
   ])
   const yaEnApp = new Set([...(r ?? []), ...(k ?? []), ...(b ?? [])].map((x: { fudo_expense_id: string | null }) => x.fudo_expense_id))
   const pendientes = gastos.filter((g) => !yaEnApp.has(g.id))
+  resumen.pendientes = pendientes.length
 
-  if (pendientes.length === 0) return
+  if (pendientes.length === 0) return resumen
 
   // Cargar mapeos en bloque (evita N queries individuales)
   const [{ data: stockItems }, { data: suppliers }] = await Promise.all([
@@ -375,7 +382,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
     for (const item of renglones) {
       if (item.qty <= 0) continue
       const si = item.si
-      if (!si) continue // sin stock_item vinculado → sin match
+      if (!si) { resumen.sinVinculo++; continue } // sin stock_item vinculado → sin match
 
       // Verificar que no exista ya un receipt para este gasto + insumo
       const { data: dup } = await admin
@@ -405,6 +412,7 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
       })
       if (rcptErr) {
         console.error('[importarGastosManuales] error receipt:', rcptErr.message, { gasto: gasto.id, item: si.id })
+        if (resumen.errores.length < 5) resumen.errores.push(`#${gasto.id}: ${rcptErr.message.slice(0, 120)}`)
         continue
       }
       // No se suma a current_qty: la compra ya está en el stock de Fudo
@@ -425,4 +433,5 @@ async function importarGastosManuales(admin: SupabaseClient, ahora: Date): Promi
   // Hubo compras nuevas: que el paso 'stock' de este mismo pulso (corre después
   // de los avisos) vuelva a leer el stock de Fudo en vez de esperar la hora
   if (importados > 0) await actualizarSalud(admin, { ultima_lectura_stock_at: null })
+  return { ...resumen, importados }
 }
