@@ -57,6 +57,12 @@ export type FudoExpense = {
   items: FudoExpenseItem[]
   /** Renglones con producto: cantidad y total de la línea */
   productItems: FudoExpenseProductItem[]
+  /** Monto del gasto en Fudo (el total de la factura) */
+  montoGasto: number
+  /** 'PAID' | 'UNPAID' */
+  status: string | null
+  /** Pagos vigentes con su medio (la deuda en Cta. Cte. es un pago con ese medio) */
+  pagos: { amount: number; paymentMethodId: string | null }[]
 }
 
 type JsonApiRes = {
@@ -131,7 +137,7 @@ export async function fetchFudoExpensesConMeta(
   const rawExpenses: JsonApiRes[] = []
   // included se va acumulando entre páginas (Provider/Payment/ExpenseItem/Ingredient)
   const providerName = new Map<string, string>()
-  const payments = new Map<string, { amount: number; canceled: boolean; createdAt: string }>()
+  const payments = new Map<string, { amount: number; canceled: boolean; createdAt: string; paymentMethodId: string | null }>()
   const ingredientName = new Map<string, string>()
   const expenseItemIngredient = new Map<string, string | null>()
   const expenseItemProduct = new Map<string, string | null>()
@@ -141,7 +147,12 @@ export async function fetchFudoExpensesConMeta(
   try {
     for (let page = 1; page <= 20; page++) {
       const res = await fudoFetch<ExpensesResponse>(
-        `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product&page[size]=${pageSize}&page[number]=${page}`,
+        // Con fields explícitos: sin fields[expenseItem] Fudo no manda cantidad
+        // ni precio de los renglones, y sin fields[expense] no manda monto ni
+        // estado (el importador leía todo en 0 y no traía nada, 4/11)
+        `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product`
+        + '&fields[expense]=amount,status,canceled,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
+        + `&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
       rawExpenses.push(...data)
@@ -157,6 +168,7 @@ export async function fetchFudoExpensesConMeta(
               amount: Number(attrs.amount ?? 0) || 0,
               canceled: Boolean(attrs.canceled),
               createdAt: String(attrs.createdAt ?? ''),
+              paymentMethodId: relOne(inc.relationships, 'paymentMethod')?.id ?? null,
             })
             break
           case 'Ingredient':
@@ -186,11 +198,13 @@ export async function fetchFudoExpensesConMeta(
 
   const expenses: FudoExpense[] = []
   for (const exp of rawExpenses) {
+    // Anulado en Fudo: no es una compra (antes no llegaba el dato y se colaban)
+    if (exp.attributes?.canceled === true) continue
     // Pagos no cancelados de este gasto
     const paymentRefs = relArray(exp.relationships, 'payments')
     const validPayments = paymentRefs
       .map((p) => payments.get(p.id))
-      .filter((p): p is { amount: number; canceled: boolean; createdAt: string } => !!p && !p.canceled)
+      .filter((p): p is { amount: number; canceled: boolean; createdAt: string; paymentMethodId: string | null } => !!p && !p.canceled)
 
     if (validPayments.length === 0) continue // sin pago válido → descartar
 
@@ -234,6 +248,9 @@ export async function fetchFudoExpensesConMeta(
       itemCount: items.length,
       items,
       productItems,
+      montoGasto: Math.round((Number(exp.attributes?.amount ?? amount) || 0) * 100) / 100,
+      status: typeof exp.attributes?.status === 'string' ? exp.attributes.status : null,
+      pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId })),
     })
   }
 

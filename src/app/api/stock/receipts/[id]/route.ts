@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { anularEnGastoFudo, corregirMontoEnGastoFudo, fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
-import { NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
+import { NOTA_DIFERENCIA_FUDO, NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -49,6 +49,11 @@ type ReceiptRow = {
   order_source: string | null
   received_date: string | null
   fudo_expense_id: string | null
+}
+
+/** Recibo que acompaña a una factura sin ser mercadería (impuestos, diferencia con Fudo): si queda solo, se va con ella */
+function esAgregadoDeFactura(note: string | null): boolean {
+  return (note ?? '').startsWith(NOTA_IMPUESTOS) || (note ?? '').startsWith(NOTA_DIFERENCIA_FUDO)
 }
 
 /** Gasto que cargaron directo en Fudo: la app no lo creó ni le sumó stock (se corrige en Fudo) */
@@ -299,7 +304,7 @@ export async function DELETE(
       gastoFudo = { anulado: false, ajustado: false, aviso: `Este gasto lo cargaron en Fudo (#${gastoId}): si la compra no fue, anulalo allá (si no, la app lo vuelve a traer)` }
     } else if (gastoId) {
       const { data: hermanos } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', gastoId).neq('id', receiptId)
-      const quedanOtros = ((hermanos ?? []) as { id: number; note: string | null }[]).some((r) => !(r.note ?? '').startsWith(NOTA_IMPUESTOS))
+      const quedanOtros = ((hermanos ?? []) as { id: number; note: string | null }[]).some((r) => !esAgregadoDeFactura(r.note))
       const r = await anularEnGastoFudo({
         expenseId: gastoId, monto: Number(receipt.cost_total ?? 0), qty: receipt.qty, quedanOtros,
         fudoIngredientId: si?.fudo_ingredient_id, fudoProductId: si?.fudo_product_id, medio: receipt.payment_method,
@@ -385,13 +390,13 @@ export async function DELETE(
     const { error: delErr } = await admin.from('stock_receipts').delete().eq('id', receiptId)
     if (delErr) throw delErr
 
-    // 3b) Si de esa factura quedó solo el recibo de impuestos (IVA/IIBB), se va
-    // con ella: no queda deuda ni pago de una factura que ya no está
+    // 3b) Si de esa factura quedó solo el recibo de impuestos (IVA/IIBB) o la
+    // diferencia con Fudo, se va con ella: no queda deuda de una factura que ya no está
     let impuestosBorrados = 0
-    if (receipt.fudo_expense_id && !(receipt.note ?? '').startsWith(NOTA_IMPUESTOS)) {
+    if (receipt.fudo_expense_id && !esAgregadoDeFactura(receipt.note)) {
       const { data: restantes } = await admin.from('stock_receipts').select('id, note').eq('fudo_expense_id', receipt.fudo_expense_id)
       const filas = (restantes ?? []) as { id: number; note: string | null }[]
-      if (filas.length > 0 && filas.every((r) => (r.note ?? '').startsWith(NOTA_IMPUESTOS))) {
+      if (filas.length > 0 && filas.every((r) => esAgregadoDeFactura(r.note))) {
         const { error: impErr } = await admin.from('stock_receipts').delete().in('id', filas.map((r) => r.id))
         if (impErr) console.warn('[DELETE receipt] recibo de impuestos no borrado:', impErr.message)
         else impuestosBorrados = filas.length

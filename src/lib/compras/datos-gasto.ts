@@ -12,6 +12,13 @@
 /** Nota del recibo con el IVA/IIBB de una factura (sin producto: no es costo de insumos) */
 export const NOTA_IMPUESTOS = 'Impuestos de la factura'
 
+/**
+ * Nota del recibo con lo que le agregaron en Fudo a un gasto que sigue sin
+ * pagar (ej. el IVA, #228): sin producto, para que "a pagar" dé lo mismo que
+ * Fudo. Lo crea y ajusta sincronizarPagosDesdeFudo (lib/compras/pagos-fudo).
+ */
+export const NOTA_DIFERENCIA_FUDO = 'Diferencia con Fudo'
+
 export type ComprobanteTipo = 'sin_comprobante' | 'ticket' | 'factura_a' | 'factura_b' | 'factura_c'
 
 export const COMPROBANTES: { key: ComprobanteTipo; label: string }[] = [
