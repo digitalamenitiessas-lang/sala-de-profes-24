@@ -154,8 +154,9 @@ const QUERY_PERMISSIONS: Record<string, string[]> = {
   RECETAS_RIESGO: ['socio', 'encargado', 'chef', 'cocina'],
   PRODUCCION_HOY: ['socio', 'encargado', 'chef', 'cocina'],
   PENDIENTES_LINKS: ['socio', 'encargado'],
-  VENTAS_HOY: ['socio', 'encargado'],
-  COSTO_PLATO: ['socio', 'encargado', 'chef'],
+  // Ventas, precio de venta, margen y ganancia: solo socios (pedido del 5/11)
+  VENTAS_HOY: ['socio'],
+  COSTO_PLATO: ['socio'],
   BRIEFING_DIARIO: ['socio', 'encargado'],
   FICHAJES_ANOMALIAS: ['socio', 'encargado'],
 }

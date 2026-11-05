@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { canCountStock, isManagerOrAbove } from '@/lib/roles'
+import { canCountStock, isManagerOrAbove, isSocio } from '@/lib/roles'
 import { logAudit } from '@/lib/audit'
-import { planFromQuestion, runPlan, planNeedsManager, type AskScope } from '@/lib/ai/ask'
+import { planFromQuestion, runPlan, planNeedsManager, planNeedsSocio, sinMontos, type AskScope } from '@/lib/ai/ask'
 
 // ---------------------------------------------------------------------------
 // POST /api/ask — preguntar en castellano desde cualquier pantalla
@@ -40,6 +40,11 @@ export async function POST(request: NextRequest) {
 
     const { plan, via } = await planFromQuestion(question, scope)
 
+    if (planNeedsSocio(plan) && !isSocio(profile.role)) {
+      return NextResponse.json({
+        error: 'Las ventas y los márgenes solo los ven los socios. Preguntame por stock, pedidos o producción.',
+      }, { status: 403 })
+    }
     if (planNeedsManager(plan) && !isManagerOrAbove(profile.role)) {
       return NextResponse.json({
         error: 'Esa consulta es sobre plata (ventas, márgenes o compras) y la ven socio o encargado. Preguntame por stock, pedidos o producción.',
@@ -47,7 +52,8 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminClient()
-    const result = await runPlan(admin, plan)
+    // Sin rol de encargado o socio, nada de plata (valor del stock, costos)
+    const result = isManagerOrAbove(profile.role) ? await runPlan(admin, plan) : sinMontos(await runPlan(admin, plan))
 
     logAudit(admin, {
       userId: user.id,

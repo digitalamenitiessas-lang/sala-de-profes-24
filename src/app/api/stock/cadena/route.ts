@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isKitchenRole } from '@/lib/roles'
+import { isKitchenRole, isSocio } from '@/lib/roles'
 import { costRecipes, canon, toStockUnit } from '@/lib/recipes/recipe-cost'
 import { esCostoConfiable, esErrorColumnaFaltante } from '@/lib/costos/confiable'
 
@@ -210,6 +210,19 @@ export type CadenaPayload = {
 }
 
 const cache = new Map<string, { at: number; payload: CadenaPayload }>()
+
+/** La cadena sin lo que sale de las ventas en $ (precio de venta, facturación, margen) */
+function sinVentas(p: CadenaPayload): CadenaPayload & { ve_montos: false } {
+  return {
+    ...p,
+    venta: {
+      ...p.venta,
+      platos: p.venta.platos.map((x) => ({ ...x, precio_promedio: null, margen_unit: null, margen_pct: null, facturacion_28d: 0 })),
+    },
+    resumen: { ...p.resumen, facturacion: 0, margen: null, margen_pct: null, peso_insumo_pct: null },
+    ve_montos: false,
+  }
+}
 
 // --- Helpers de dominio --------------------------------------------------
 
@@ -895,16 +908,19 @@ export async function GET(request: NextRequest) {
     const itemId = request.nextUrl.searchParams.get('item')
     if (!itemId) return NextResponse.json({ error: 'Falta el parámetro item' }, { status: 400 })
 
+    // Precio de venta, facturación y margen: solo socios (pedido del 5/11)
+    const responder = (p: CadenaPayload) => NextResponse.json(isSocio(profile?.role) ? { ...p, ve_montos: true } : sinVentas(p))
+
     const cached = cache.get(itemId)
     if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-      return NextResponse.json(cached.payload)
+      return responder(cached.payload)
     }
 
     const payload = await buildCadena(createAdminClient(), itemId)
     if (!payload) return NextResponse.json({ error: 'Insumo no encontrado' }, { status: 404 })
 
     cache.set(itemId, { at: Date.now(), payload })
-    return NextResponse.json(payload)
+    return responder(payload)
   } catch (err) {
     console.error('[GET /api/stock/cadena]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ActivarAvisos } from '@/components/push/ActivarAvisos'
-import { isManagerOrAbove, mustClockIn } from '@/lib/roles'
+import { isManagerOrAbove, isSocio, mustClockIn } from '@/lib/roles'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale/es'
@@ -169,7 +169,8 @@ export default function DashboardPage() {
     },
   ]
 
-  const actions = isEncargado ? managerActions : employeeActions
+  // "Números" (ventas y facturación): solo socios (5/11)
+  const actions = isEncargado ? managerActions.filter((a) => a.href !== '/ventas' || isSocio(profile?.role)) : employeeActions
 
   return (
     <div className="mx-auto max-w-2xl space-y-5 pb-8">
@@ -182,6 +183,7 @@ export default function DashboardPage() {
         <FadeIn className="pt-1">
           <PulseCarousel
             ventasHoy={ventasHoy ? { total: ventasHoy.total, tickets: ventasHoy.tickets, peakHour: ventasHoy.peakHour } : null}
+            esSocio={isSocio(profile?.role)}
           />
         </FadeIn>
       ) : (

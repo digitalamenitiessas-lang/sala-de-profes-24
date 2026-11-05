@@ -81,6 +81,28 @@ export function planNeedsManager(plan: QueryPlan): boolean {
   return MONEY_ENTITIES.includes(plan.entity)
 }
 
+/** Ventas y márgenes: solo socios (pedido del 5/11). Compras: socio o encargado. */
+export function planNeedsSocio(plan: QueryPlan): boolean {
+  return plan.entity === 'ventas' || plan.entity === 'margen'
+}
+
+const COLUMNAS_PLATA = new Set(['valor', 'costo', 'costo_unidad', 'gastado', 'facturado', 'margen'])
+
+/**
+ * El resultado sin plata, para quien no es socio ni encargado: sin columnas
+ * de $ y sin los montos de la respuesta ("$X en stock", "($X estimado)").
+ * Antes un barista preguntaba "¿cuánta plata tengo en stock?" y le contestaba.
+ */
+export function sinMontos(r: AskResult): AskResult {
+  return {
+    ...r,
+    answer: r.answer.replace(/\s*\(\$[^)]*\)/g, '').replace(/,\s*\$[\d.,]+\s+en (stock|insumos)/g, ''),
+    columns: r.columns?.filter((c) => !COLUMNAS_PLATA.has(c.key)),
+    rows: r.rows?.map((row) => Object.fromEntries(Object.entries(row).filter(([k]) => !COLUMNAS_PLATA.has(k)))),
+    note: r.note && /costo|\$/i.test(r.note) ? undefined : r.note,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 1) Pregunta → plan
 // ---------------------------------------------------------------------------

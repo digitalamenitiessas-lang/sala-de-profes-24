@@ -11,7 +11,7 @@ export const maxDuration = 60
 const FECHA = /^\d{4}-\d{2}-\d{2}$/
 
 export async function GET(request: NextRequest) {
-  const auth = await requireRole(['socio', 'encargado'])
+  const auth = await requireRole(['socio']) // ventas y sueldos/ventas: solo socios
   if (auth.response) return auth.response
   const from = request.nextUrl.searchParams.get('from') ?? ''
   const to = request.nextUrl.searchParams.get('to') ?? ''

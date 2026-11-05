@@ -29,7 +29,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export async function GET() {
   const auth = await requireRole(ROLES)
   if (auth.response) return auth.response
-  return NextResponse.json(await armarPanelSalud(createAdminClient()))
+  const panel = await armarPanelSalud(createAdminClient())
+  // Cuántos tickets hubo hoy es dato de ventas: solo socios (5/11)
+  if (auth.user.role !== 'socio') return NextResponse.json({ ...panel, ventas: { ...panel.ventas, tickets_hoy: null } })
+  return NextResponse.json(panel)
 }
 
 export async function POST(request: Request) {

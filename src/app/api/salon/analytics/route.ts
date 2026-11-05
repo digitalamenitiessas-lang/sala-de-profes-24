@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { format, subDays, parseISO, differenceInMinutes } from 'date-fns'
 import { es } from 'date-fns/locale/es'
 import { fudoHttp } from '@/lib/fudoClient'
+import { isManagerOrAbove } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -26,6 +27,9 @@ export async function GET(request: NextRequest) {
     const userSupabase = await createClient()
     const { data: { user } } = await userSupabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    // Tiempos de servicio (minutos, sin plata): socio o encargado (antes cualquier usuario logueado)
+    const { data: perfil } = await userSupabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!isManagerOrAbove(perfil?.role)) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     const admin = createAdminClient()
     const url = new URL(request.url)

@@ -41,6 +41,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   type Insumo = { id: string; name: string; unit: string; cost_per_unit: number | null; is_produced: boolean | null }
   const porId = new Map(((insumos ?? []) as Insumo[]).map((i) => [i.id, i]))
   const c = plato.recipe_id ? costos.get(plato.recipe_id) : undefined
+  // Costos: solo socios (pedido del 5/11). La receta y cómo se arma, para todos.
+  const veCostos = auth.user.role === 'socio'
   let editadaPor: string | null = null
   if (receta?.editada_por) {
     const { data: p } = await admin.from('profiles').select('first_name').eq('id', receta.editada_por).maybeSingle()
@@ -71,7 +73,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         opciones: g.opciones.map((o) => {
           const rid = recetaDe.get(o.fudoProductId)
           const c = rid ? costosOp.get(rid) : undefined
-          return { nombre: o.nombre, precioExtra: o.precioExtra, costo: c && c.cost > 0 ? Math.round(c.cost) : null, conReceta: !!rid && (c?.ingredients ?? 0) > 0 }
+          return { nombre: o.nombre, precioExtra: o.precioExtra, costo: veCostos && c && c.cost > 0 ? Math.round(c.cost) : null, conReceta: !!rid && (c?.ingredients ?? 0) > 0 }
         }),
       }))
     } catch { /* Fudo no respondió: el plato se muestra sin las opciones */ }
@@ -84,7 +86,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     editadaEnApp: receta?.editada_en_app_at ?? null,
     editadaPor,
     desdeFudo: receta?.fudo_synced_at ?? null,
-    costo: c && c.cost > 0 ? c.cost : null,
+    costo: veCostos && c && c.cost > 0 ? c.cost : null,
     costoCompleto: c?.confiable ?? false,
     sinCosto: c?.missingNames ?? [],
     ingredientes: ((ings ?? []) as { stock_item_id: string; qty_per_portion: number | null; ingredient_unit: string | null; notes: string | null }[])
@@ -101,8 +103,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           lleva: i?.is_produced ? lleva(r.stock_item_id) : null,
         }
       }),
-    insumos: ((insumos ?? []) as Insumo[]).map((i) => ({ id: i.id, nombre: i.name, unidad: i.unit, costo: i.cost_per_unit, elaborado: !!i.is_produced })),
+    insumos: ((insumos ?? []) as Insumo[]).map((i) => ({ id: i.id, nombre: i.name, unidad: i.unit, costo: veCostos ? i.cost_per_unit : null, elaborado: !!i.is_produced })),
     puedeEditar: EDITAN.includes(auth.user.role),
+    veCostos,
   })
 }
 

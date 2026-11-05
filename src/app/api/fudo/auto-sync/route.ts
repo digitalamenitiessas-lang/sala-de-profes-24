@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { fudo } from '@/lib/fudoClient'
+import { isSocio } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // GET /api/fudo/auto-sync — Real-time sales from Fudo
 // Fetches directly from Fudo API with include=items.product,table
 // Returns live data: mesas en curso, cerradas, productos vendidos
-// Requires authentication — only socio/encargado can access
+// Ventas y facturación: solo socios (antes cualquier usuario logueado, 5/11)
 // ---------------------------------------------------------------------------
 
 export const dynamic = 'force-dynamic'
@@ -31,6 +32,8 @@ export async function GET(request: NextRequest) {
       if (!user) {
         return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
       }
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+      if (!isSocio(profile?.role)) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
     }
 
     // Accept ?date=YYYY-MM-DD for historical data, default to today

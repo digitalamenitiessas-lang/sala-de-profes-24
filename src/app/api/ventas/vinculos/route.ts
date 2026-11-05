@@ -42,7 +42,7 @@ async function payload(fresh: boolean): Promise<VentasVinculosPayload> {
 
 export async function GET(request: Request) {
   try {
-    const auth = await requireRole(['socio', 'encargado'])
+    const auth = await requireRole(['socio'])
     if (auth.response) return auth.response
     const url = new URL(request.url)
     const p = await payload(url.searchParams.get('fresh') === '1')

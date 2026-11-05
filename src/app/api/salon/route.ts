@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { fudoHttp } from '@/lib/fudoClient'
 import { fechaOperativa } from '@/lib/attendance/jornada'
+import { isSocio } from '@/lib/roles'
 
 // ---------------------------------------------------------------------------
 // GET /api/salon — Open tables with items and delay semaphore
@@ -16,6 +17,9 @@ export async function GET() {
     const userSupabase = await createClient()
     const { data: { user } } = await userSupabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    // El $ de cada mesa es facturación: solo lo ven los socios (5/11)
+    const { data: perfil } = await userSupabase.from('profiles').select('role').eq('id', user.id).single()
+    const veMontos = isSocio(perfil?.role)
     const admin = createAdminClient()
 
     // Solo las ventas abiertas (antes: las últimas 50 ventas, y en un día con
@@ -129,7 +133,7 @@ export async function GET() {
           tableNumber: table?.number ?? null,
           saleType: sale.attributes.saleType,
           state: sale.attributes.saleState,
-          total: sale.attributes.total,
+          total: veMontos ? sale.attributes.total : null,
           people: sale.attributes.people,
           createdAt: sale.attributes.createdAt,
           minutesOpen: Math.round((now.getTime() - new Date(sale.attributes.createdAt).getTime()) / 60000),

@@ -33,6 +33,8 @@ type Detalle = {
   ingredientes: { stock_item_id: string; nombre: string; unidadStock: string; qty: number; unidad: string; nota: string | null; elaborado: boolean; lleva: string | null }[]
   opciones: { nombre: string; min: number; max: number; opciones: { nombre: string; precioExtra: number; costo: number | null; conReceta: boolean }[] }[]
   insumos: Insumo[]; puedeEditar: boolean
+  /** Costo y margen: solo socios */
+  veCostos?: boolean
 }
 type Filtro = 'todos' | 'sin_receta' | 'opciones' | 'revisar'
 
@@ -220,10 +222,11 @@ function EditorPlato({ id, puedeEditar, onClose, onGuardado }: { id: string; pue
         <DialogHeader><DialogTitle>{d?.plato.nombre ?? 'Cargando…'}</DialogTitle></DialogHeader>
         {!d ? <div className="flex justify-center py-8"><Loader2 className="size-5 animate-spin text-[#a39e97]" /></div> : (
           <div className="space-y-3">
-            <div className="grid grid-cols-3 gap-2 text-center">
+            {/* Costo y margen: solo socios (la API no los manda a los demás) */}
+            <div className={cn('grid gap-2 text-center', d.veCostos ? 'grid-cols-3' : 'grid-cols-1')}>
               <Dato titulo="Precio" valor={d.plato.precio ? money(d.plato.precio) : '—'} />
-              <Dato titulo="Costo" valor={costo > 0 ? money(costo) : '—'} />
-              <Dato titulo="Costo / precio" valor={pct != null ? `${pct}%` : '—'} tono={pct != null && pct > 35 ? 'rojo' : undefined} />
+              {d.veCostos && <Dato titulo="Costo" valor={costo > 0 ? money(costo) : '—'} />}
+              {d.veCostos && <Dato titulo="Costo / precio" valor={pct != null ? `${pct}%` : '—'} tono={pct != null && pct > 35 ? 'rojo' : undefined} />}
             </div>
 
             {graves > 0 && (

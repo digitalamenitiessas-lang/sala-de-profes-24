@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { isSocio } from '@/lib/roles'
 import { fetchMonthSales } from '@/lib/fudo/month-sales'
 import { format } from 'date-fns'
 
@@ -15,6 +16,9 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    // Ventas del mes: solo socios (antes cualquier usuario logueado, 5/11)
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!isSocio(profile?.role)) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     const monthParam = request.nextUrl.searchParams.get('month')
     const { sales: allSales, start, days, truncado } = await fetchMonthSales(monthParam)

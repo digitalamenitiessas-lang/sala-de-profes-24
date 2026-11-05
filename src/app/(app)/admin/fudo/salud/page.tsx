@@ -18,7 +18,8 @@ type Roto = { stock_item_id: string; nombre: string; unidad: string; stock: numb
 type SinControl = { stock_item_id: string; nombre: string; fudo_nombre: string | null; fudo_id: string | null; con_pendientes: boolean; movimientos_30d: number }
 type Datos = {
   conexion: { estado: 'ok' | 'intermitente' | 'caido' | 'sin_datos'; ultimo_ok_at: string | null; ultimo_error: string | null; ultimo_error_at: string | null; ultimo_menu_at: string | null }
-  ventas: { ultima_at: string | null; ok: boolean; error: string | null; tickets_hoy: number }
+  /** tickets_hoy: null si no es socio (dato de ventas) */
+  ventas: { ultima_at: string | null; ok: boolean; error: string | null; tickets_hoy: number | null }
   stock: { ultima_at: string | null; ok: boolean }
   reintentos: { pendientes: Pendiente[]; hechos_7d: number; descartados_7d: { id: string; origen: string; ultimo_error: string | null; stock_items: { name: string } | null }[] }
   vinculos_rotos: Roto[]
@@ -96,7 +97,7 @@ export default function SaludFudoPage() {
           </button>
         </div>
         <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-          <Dato label="Ventas" valor={hace(data.ventas.ultima_at)} extra={`${data.ventas.tickets_hoy} tickets hoy`} />
+          <Dato label="Ventas" valor={hace(data.ventas.ultima_at)} extra={data.ventas.tickets_hoy != null ? `${data.ventas.tickets_hoy} tickets hoy` : undefined} />
           <Dato label="Stock" valor={hace(data.stock.ultima_at)} extra="cada hora" />
           <Dato label="Menú y precios" valor={hace(c.ultimo_menu_at)} extra="1 vez por día" />
         </div>
@@ -321,12 +322,12 @@ function FilaSinControl({ s, ocupado, correr }: { s: SinControl; ocupado: string
   )
 }
 
-function Dato({ label, valor, extra }: { label: string; valor: string; extra: string }) {
+function Dato({ label, valor, extra }: { label: string; valor: string; extra?: string }) {
   return (
     <div className="rounded-xl bg-white/60 px-2 py-2">
       <p className="text-[10.5px] font-semibold uppercase tracking-wide opacity-70">{label}</p>
       <p className="text-[12.5px] font-bold leading-tight">{valor}</p>
-      <p className="text-[10.5px] opacity-70">{extra}</p>
+      {extra && <p className="text-[10.5px] opacity-70">{extra}</p>}
     </div>
   )
 }

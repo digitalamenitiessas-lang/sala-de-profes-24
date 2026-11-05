@@ -14,7 +14,7 @@ export const maxDuration = 60
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireRole(['socio', 'encargado'])
+    const auth = await requireRole(['socio']) // ventas: solo socios
     if (auth.response) return auth.response
 
     const body = await request.json().catch(() => ({}))

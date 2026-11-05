@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isManagerOrAbove } from '@/lib/roles'
+import { isSocio } from '@/lib/roles'
 import { aggregateVentas, type VentasCanal } from '@/lib/ventas/aggregate'
 import type { RangeData } from '@/app/(app)/ventas/_components/types'
 
@@ -51,6 +51,9 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
+    // Ventas: solo socios (antes cualquier usuario logueado, 5/11)
+    const { data: perfil } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (!isSocio(perfil?.role)) return NextResponse.json({ error: 'Sin permisos' }, { status: 403 })
 
     const params = request.nextUrl.searchParams
     const from = params.get('from') ?? ''
@@ -79,12 +82,8 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient()
 
-    // El rol solo hace falta para fresh/costos: no frenamos al resto por esto
-    let esManager = false
-    if (quiereFresh || quiereCostos) {
-      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-      esManager = isManagerOrAbove(profile?.role)
-    }
+    // Ya se exigió socio arriba: fresh y costos quedan habilitados
+    const esManager = true
 
     // fresh=1: si el rango incluye hoy o ayer, traer de Fudo lo de hoy+ayer
     // antes de agregar (con throttle: el sync es caro y esto es un dashboard)

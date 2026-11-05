@@ -54,6 +54,8 @@ export async function GET() {
   }
   const editada = new Map(((recetas) as { id: string; editada_en_app_at: string | null }[]).map((r) => [r.id, r.editada_en_app_at]))
 
+  // Costos y margen: solo socios (pedido del 5/11). Las recetas, para todos.
+  const veCostos = auth.user.role === 'socio'
   return NextResponse.json({
     platos: lista.map((p) => {
       const c = p.recipe_id ? costos.get(p.recipe_id) : undefined
@@ -64,7 +66,7 @@ export async function GET() {
         categoria: p.menu_category_id ? nombreCat.get(p.menu_category_id) ?? 'Sin categoría' : 'Sin categoría',
         precio: p.sale_price != null ? Number(p.sale_price) : null,
         ingredientes,
-        costo: c && c.cost > 0 ? c.cost : null,
+        costo: veCostos && c && c.cost > 0 ? c.cost : null,
         costoCompleto: c?.confiable ?? false,
         revisar: p.recipe_id ? revisar.get(p.recipe_id) ?? [] : [],
         editadaEnApp: p.recipe_id ? !!editada.get(p.recipe_id) : false,

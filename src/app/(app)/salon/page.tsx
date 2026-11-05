@@ -31,7 +31,8 @@ type TableData = {
   tableNumber: number | null
   saleType: string
   state: string
-  total: number
+  /** null si no es socio (el $ de la mesa es facturación) */
+  total: number | null
   people: number | null
   createdAt: string
   /** Hora del pedido que se espera (el más viejo sin servir) o del último si está todo servido */
@@ -326,8 +327,8 @@ export default function SalonPage() {
                         )}
                       </div>
                       <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#a39e97]">
-                        <span>{formatPrice(table.total)}</span>
-                        <span>· {table.itemsServed}/{table.itemsTotal} servidos</span>
+                        {table.total != null && <span>{formatPrice(table.total)} ·</span>}
+                        <span>{table.itemsServed}/{table.itemsTotal} servidos</span>
                         <span>· {allServed ? 'último pedido' : 'pidió'} {format(new Date(table.pedidoAt ?? table.createdAt), 'HH:mm')}</span>
                       </div>
                     </div>

@@ -113,8 +113,9 @@ type AuditEntry = {
 const initialState = { loading: true, error: null, data: null }
 
 // Links compactos a reportes existentes
-const REPORT_LINKS: { label: string; href: string }[] = [
-  { label: 'Ventas y márgenes', href: '/admin/reportes/ventas' },
+// soloSocio: ventas, márgenes y consumo en $ los ven solo los socios (5/11)
+const REPORT_LINKS: { label: string; href: string; soloSocio?: boolean }[] = [
+  { label: 'Ventas y márgenes', href: '/admin/reportes/ventas', soloSocio: true },
   { label: 'Asistencia', href: '/admin/reportes/asistencia' },
   { label: 'Sospechosos', href: '/admin/reportes/fichajes-sospechosos' },
   { label: 'Turnos', href: '/admin/reportes/turnos' },
@@ -124,10 +125,10 @@ const REPORT_LINKS: { label: string; href: string }[] = [
 ]
 
 // Accesos rápidos (ex /admin)
-const QUICK_LINKS = [
+const QUICK_LINKS: { href: string; icon: typeof Users; label: string; color: string; soloSocio?: boolean }[] = [
   { href: '/pedidos/cuentas', icon: CreditCard, label: 'Cuentas a pagar', color: '#d4943a' },
   { href: '/asistente', icon: MessageCircle, label: 'La Vieja de Historia', color: '#8b5e34' },
-  { href: '/ventas?m=personal', icon: Users, label: 'Consumo del personal', color: '#ea504c' },
+  { href: '/ventas?m=personal', icon: Users, label: 'Consumo del personal', color: '#ea504c', soloSocio: true },
   { href: '/equipo', icon: Users, label: 'Gestionar Equipo', color: '#8b5e34' },
   { href: '/stock', icon: Package, label: 'Gestionar Stock', color: '#ea504c' },
 ]
@@ -623,7 +624,7 @@ export default function ControlPage() {
       <FadeIn delay={0.03}>
         <h2 className="section-label mb-3">Accesos rápidos</h2>
         <StaggerList className="flex flex-col gap-2" staggerDelay={0.04}>
-          {QUICK_LINKS.map((link) => (
+          {QUICK_LINKS.filter((l) => !l.soloSocio || isSocio(profile?.role)).map((link) => (
             <StaggerItem key={link.href}>
               <ScalePress>
                 <Link href={link.href}>
@@ -948,7 +949,7 @@ export default function ControlPage() {
       <FadeIn delay={0.1}>
         <h2 className="section-label mb-2">Reportes</h2>
         <div className="flex flex-wrap gap-2">
-          {REPORT_LINKS.map((link) => (
+          {REPORT_LINKS.filter((l) => !l.soloSocio || isSocio(profile?.role)).map((link) => (
             <Link
               key={link.href}
               href={link.href}

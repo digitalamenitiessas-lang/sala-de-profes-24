@@ -294,7 +294,7 @@ function StockPageContent() {
         <AskBar
           scope="stock"
           placeholder="Preguntá: qué falta, qué está en negativo…"
-          examples={['¿qué me falta en cocina?', '¿qué hay en negativo?', '¿qué no cuento hace una semana?', '¿cuánta plata tengo en stock?']}
+          examples={['¿qué me falta en cocina?', '¿qué hay en negativo?', '¿qué no cuento hace una semana?', ...(isManager ? ['¿cuánta plata tengo en stock?'] : [])]}
         />
       </FadeIn>
 

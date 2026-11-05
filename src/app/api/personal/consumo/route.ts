@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { isSocio, isManagerOrAbove } from '@/lib/roles'
+import { isSocio } from '@/lib/roles'
 import { fudo } from '@/lib/fudoClient'
 import { costRecipes } from '@/lib/recipes/recipe-cost'
 
@@ -174,7 +174,8 @@ export async function GET(request: NextRequest) {
 
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
     // Foco: socio. También se permite encargado.
-    if (!isSocio(profile?.role) && !isManagerOrAbove(profile?.role)) {
+    // Consumo del personal en $: solo socios (pedido del 5/11)
+    if (!isSocio(profile?.role)) {
       return NextResponse.json({ error: 'Sin acceso' }, { status: 403 })
     }
 

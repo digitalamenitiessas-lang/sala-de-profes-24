@@ -19,6 +19,7 @@ import {
   Package, Clock, ArrowDown, Link2Off,
 } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem } from '@/components/ui/motion'
+import { cn } from '@/lib/utils'
 
 // --- Tipos (espejo del payload de /api/stock/cadena) ---------------------
 
@@ -143,6 +144,8 @@ type Payload = {
     notas: string[]
   }
   generated_at: string
+  /** false si no es socio: la API no manda precio de venta, facturación ni margen */
+  ve_montos?: boolean
 }
 
 // --- Formato --------------------------------------------------------------
@@ -516,7 +519,7 @@ export function CadenaInsumo({ itemId }: { itemId: string }) {
                             {p.qty_por_porcion != null && ` · ${qty(p.qty_por_porcion, p.unit)}/plato`}
                           </p>
                         </div>
-                        <div className="shrink-0 text-right">
+                        {data.ve_montos !== false && <div className="shrink-0 text-right">
                           {p.margen_unit != null ? (
                             <>
                               <p className="font-display text-[16px] tabular-nums text-[#006d5a]">{money(p.margen_unit)}</p>
@@ -525,7 +528,7 @@ export function CadenaInsumo({ itemId }: { itemId: string }) {
                           ) : (
                             <p className="text-[11px] font-semibold text-[#d4943a]">sin margen</p>
                           )}
-                        </div>
+                        </div>}
                       </div>
 
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -569,7 +572,7 @@ export function CadenaInsumo({ itemId }: { itemId: string }) {
               </p>
             </div>
 
-            <div className="mt-2.5 grid grid-cols-3 gap-2">
+            <div className={cn('mt-2.5 grid gap-2', data.ve_montos !== false ? 'grid-cols-3' : 'grid-cols-2')}>
               <Dato
                 label="Insumo usado"
                 value={resumen.insumo_consumido != null ? qty(resumen.insumo_consumido, item.unit) : '—'}
@@ -579,7 +582,7 @@ export function CadenaInsumo({ itemId }: { itemId: string }) {
                 value={money(resumen.insumo_consumido_costo)}
                 accent="#d4943a"
               />
-              <Dato label="Facturó" value={money(resumen.facturacion)} accent="#006d5a" />
+              {data.ve_montos !== false && <Dato label="Facturó" value={money(resumen.facturacion)} accent="#006d5a" />}
             </div>
 
             {resumen.margen != null && (

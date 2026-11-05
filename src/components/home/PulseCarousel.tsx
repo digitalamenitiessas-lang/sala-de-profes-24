@@ -54,7 +54,11 @@ const ROTATE_MS = 6000
 // Component
 // ---------------------------------------------------------------------------
 
-export function PulseCarousel({ ventasHoy }: { ventasHoy: VentasHoy }) {
+export function PulseCarousel({ ventasHoy, esSocio = false }: {
+  ventasHoy: VentasHoy
+  /** Vendido, balance y consumo del personal en $: solo socios (5/11) */
+  esSocio?: boolean
+}) {
   const [balance7, setBalance7] = useState<Balance7 | null>(null)
   const [compras, setCompras] = useState<Compras | null>(null)
   const [consumo7, setConsumo7] = useState<number | null>(null)
@@ -106,9 +110,9 @@ export function PulseCarousel({ ventasHoy }: { ventasHoy: VentasHoy }) {
     }
 
     // Promise.allSettled: una falla no tumba a las demás
-    Promise.allSettled([loadBalance(), loadCompras(), loadConsumo()])
+    Promise.allSettled(esSocio ? [loadBalance(), loadCompras(), loadConsumo()] : [loadCompras()])
     return () => { alive = false }
-  }, [])
+  }, [esSocio])
 
   // ------------------------------------------------------------------
   // Slides disponibles (solo los que tienen datos)

@@ -22,6 +22,14 @@ const MANAGER_ROUTES = [
 
 const MANAGER_ROLES = new Set(['socio', 'encargado'])
 
+// Ventas, facturación y márgenes: solo socios (pedido del 5/11). Antes
+// /ventas no tenía control y cualquier empleado veía lo facturado del día.
+const SOCIO_ROUTES = [
+  '/ventas',
+  '/admin/reportes/ventas',
+  '/admin/reportes/control',
+]
+
 export async function middleware(request: NextRequest) {
   const { supabaseResponse, user, role, isActive, authUnavailable } = await updateSession(request)
   const { pathname } = request.nextUrl
@@ -67,7 +75,10 @@ export async function middleware(request: NextRequest) {
     const needsManager = MANAGER_ROUTES.some(
       (route) => pathname === route || pathname.startsWith(route + '/'),
     )
-    if (needsManager && !MANAGER_ROLES.has(role ?? '')) {
+    const needsSocio = SOCIO_ROUTES.some(
+      (route) => pathname === route || pathname.startsWith(route + '/'),
+    )
+    if ((needsManager && !MANAGER_ROLES.has(role ?? '')) || (needsSocio && role !== 'socio')) {
       const url = request.nextUrl.clone()
       url.pathname = '/'
       return NextResponse.redirect(url)

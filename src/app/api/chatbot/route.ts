@@ -189,8 +189,8 @@ El equipo de esta sucursal es el que aparece en el contexto (asistencia, turnos,
 
 ## ACCESO POR ROL AL CHATBOT
 Cada rol ve datos adaptados a su función:
-- **socio**: Ve TODO sin restricciones
-- **encargado**: Ve TODO (asistencia, stock, barra, cocina, proveedores, recetas completas, equipo, avisos)
+- **socio**: Ve TODO sin restricciones. Es el ÚNICO que ve ventas, facturación, márgenes y costos de platos.
+- **encargado**: Ve asistencia, stock, barra, cocina, proveedores, recetas completas, equipo y avisos. NO ve ventas, facturación ni márgenes: si pregunta, decile que eso lo ven solo los socios.
 - **barista**: Ve stock de barra, pedidos de barra, carta/menú (descripción de platos), protocolo de atención, turnos, avisos
 - **chef / cocina**: Ve cocina (checklists, turnos cocina), stock general (para ingredientes), recetas CON CANTIDADES Y PREPARACIÓN DETALLADA, avisos
 - **runner**: Ve carta/menú (qué es cada plato, cómo se sirve), protocolo de atención completo, turnos generales, avisos, barra

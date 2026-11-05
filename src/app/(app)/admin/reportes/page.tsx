@@ -3,19 +3,24 @@
 import Link from 'next/link'
 import { Users, CalendarDays, Package, BarChart2, ArrowRight, Wallet, Armchair, Bell, TrendingUp } from 'lucide-react'
 import { FadeIn, StaggerList, StaggerItem, ScalePress } from '@/components/ui/motion'
+import { useProfileContext } from '@/lib/hooks/use-profile'
+import { isSocio } from '@/lib/roles'
 
 const REPORTS = [
-  { href: '/admin/reportes/ventas', icon: BarChart2, label: 'Ventas', description: 'Food cost por producto · tabla descargable · momentos', color: '#d4943a' },
+  // soloSocio: ventas y sueldos contra ventas los ven solo los socios (5/11)
+  { href: '/admin/reportes/ventas', icon: BarChart2, label: 'Ventas', description: 'Food cost por producto · tabla descargable · momentos', color: '#d4943a', soloSocio: true },
   { href: '/admin/reportes/asistencia', icon: Users, label: 'Asistencia', description: 'Ingresos, egresos, horas por empleado', color: '#006d5a' },
   { href: '/admin/reportes/turnos', icon: CalendarDays, label: 'Turnos', description: 'Distribución por rol y cobertura', color: '#8b5e34' },
   { href: '/admin/reportes/stock', icon: Package, label: 'Stock', description: 'Semáforo, categorías, items críticos', color: '#ea504c' },
   { href: '/admin/reportes/liquidacion', icon: Wallet, label: 'Liquidación', description: 'Horas y sueldos por empleado del período', color: '#8b5e34' },
-  { href: '/admin/reportes/control', icon: TrendingUp, label: 'Control del personal', description: 'Asistencia, encargados y sueldos contra ventas', color: '#006d5a' },
+  { href: '/admin/reportes/control', icon: TrendingUp, label: 'Control del personal', description: 'Asistencia, encargados y sueldos contra ventas', color: '#006d5a', soloSocio: true },
   { href: '/admin/reportes/salon', icon: Armchair, label: 'Tiempos de servicio', description: 'Cuánto tarda una mesa, por franja', color: '#4a90d9' },
   { href: '/admin/reportes/notificaciones', icon: Bell, label: 'Notificaciones', description: 'Qué avisos se enviaron y a quién', color: '#a39e97' },
 ]
 
 export default function ReportesHubPage() {
+  const { profile } = useProfileContext()
+  const reportes = REPORTS.filter((r) => !('soloSocio' in r && r.soloSocio) || isSocio(profile?.role))
   return (
     <div className="space-y-5">
       <FadeIn>
@@ -24,7 +29,7 @@ export default function ReportesHubPage() {
       </FadeIn>
 
       <StaggerList className="flex flex-col gap-3" staggerDelay={0.06}>
-        {REPORTS.map((report) => (
+        {reportes.map((report) => (
           <StaggerItem key={report.href}>
             <ScalePress>
               <Link href={report.href}>

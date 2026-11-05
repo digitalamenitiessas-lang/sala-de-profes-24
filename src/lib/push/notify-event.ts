@@ -106,9 +106,9 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
   },
   sales_summary_daily: {
     label: 'Top 5 platos del día',
-    description: 'Notificación a las 23:30 con los 5 platos más vendidos del día completo.',
+    description: 'Notificación a las 23:30 con los 5 platos más vendidos del día completo. Solo socios.',
     enabled: true,
-    target_roles: ['socio', 'encargado', 'chef', 'barista', 'runner', 'cocina', 'bacha'],
+    target_roles: ['socio'],
     target_user_ids: [],
   },
   turno_manana: {
@@ -121,6 +121,12 @@ export const DEFAULT_NOTIFICATION_EVENTS: Record<string, NotificationEventConfig
 }
 
 export type NotificationEventKey = keyof typeof DEFAULT_NOTIFICATION_EVENTS
+
+/**
+ * Avisos con ventas, márgenes o facturación: solo a socios, aunque en la
+ * configuración alguien haya sumado otro rol o persona (pedido del 5/11).
+ */
+const EVENTOS_SOLO_SOCIOS: ReadonlySet<string> = new Set(['sales_summary_daily', 'sales_summary_shift', 'business_alerts'])
 
 const SETTINGS_KEY = 'notification_events'
 
@@ -194,6 +200,12 @@ export async function notifyEvent(
     // Y a quien trabaja ahora con ese rol según su turno (un runner que hoy
     // hace de encargado recibe los avisos de encargado)
     for (const id of await idsConRolEnTurno(admin, cfg.target_roles)) targetIds.add(id)
+  }
+
+  if (EVENTOS_SOLO_SOCIOS.has(eventKey) && targetIds.size > 0) {
+    const { data: socios } = await admin.from('profiles').select('id').in('id', [...targetIds]).eq('role', 'socio')
+    const permitidos = new Set(((socios ?? []) as { id: string }[]).map((p) => p.id))
+    for (const id of [...targetIds]) if (!permitidos.has(id)) targetIds.delete(id)
   }
 
   if (options?.excludeUserId) targetIds.delete(options.excludeUserId)
