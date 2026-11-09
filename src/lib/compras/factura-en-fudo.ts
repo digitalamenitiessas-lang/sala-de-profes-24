@@ -150,3 +150,41 @@ export async function vincularSiYaEstaEnFudo(admin: SupabaseClient, o: { id: num
   await admin.from('stock_receipts').update({ order_id: o.id, order_source: o.source }).eq('id', r.id)
   return (await cerrarConFactura(admin, o, r.fudo_expense_id, r.cost_total)) ? r.fudo_expense_id : null
 }
+
+/** "0001-00006113" y "6113" son la misma factura: el último número, sin ceros adelante */
+const numeroDeFactura = (n: string) => (n.match(/\d+/g) ?? []).pop()?.replace(/^0+/, '') ?? ''
+
+/** Recibo de una compra cargada en Fudo (importada o vinculada), no creada con "Llegó" */
+export const esReciboDeFudo = (note: string | null) => /Importado desde Fudo|cargado directo en Fudo|Factura cargada en Fudo/i.test(note ?? '')
+
+/**
+ * ¿Esta factura del proveedor ya está cargada en Fudo? Bennasar 9/11 (Santa
+ * Fe): lo que llegó el 30/10 (factura 6113, ya en Fudo) se recibió con
+ * "Llegó" y quedó duplicado con fecha de hoy. Devuelve el gasto, o null si
+ * no está o si es un gasto que creó la app con "Llegó" (factura cargada
+ * producto por producto: eso lo maneja buscarFacturaPrevia).
+ */
+export async function facturaYaEnFudo(admin: SupabaseClient, supplierId: string | null, numero: string | null): Promise<{ id: string; fecha: string; monto: number } | null> {
+  const buscado = numero ? numeroDeFactura(numero) : ''
+  if (!supplierId || !buscado) return null
+  const { data: sup } = await admin.from('suppliers').select('fudo_provider_id').eq('id', supplierId).maybeSingle()
+  const prov = (sup as { fudo_provider_id: string | null } | null)?.fudo_provider_id
+  if (!prov) return null
+  const { fetchFudoExpenses } = await import('@/lib/fudo/expenses')
+  const desde = new Date(Date.now() - 90 * 86_400_000).toISOString()
+  const iguales = (await fetchFudoExpenses(desde)).filter((e) => e.providerId === prov && e.numero && numeroDeFactura(e.numero) === buscado)
+  // Puede estar más de una vez (ya duplicada): vale la que se cargó en Fudo
+  for (const g of iguales) {
+    const { data: recibos } = await admin.from('stock_receipts').select('note').eq('fudo_expense_id', g.id)
+    if (((recibos ?? []) as { note: string | null }[]).some((r) => !esReciboDeFudo(r.note))) continue
+    return { id: g.id, fecha: g.date, monto: g.montoGasto }
+  }
+  return null
+}
+
+/** Para quien quiere cargar con "Llegó" una factura que ya está en Fudo */
+export function textoFacturaYaEnFudo(numero: string, g: { id: string; fecha: string; monto: number }): string {
+  const dia = new Date(g.fecha).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit' })
+  const monto = Math.round(g.monto).toLocaleString('es-AR')
+  return `La factura N° ${numero} ya está cargada en Fudo (gasto #${g.id} del ${dia}, $${monto}). No uses "Llegó": usá "Llegó todo" → "¿Ya lo cargaron directo en Fudo?" y elegí ese gasto, así no se duplica.`
+}

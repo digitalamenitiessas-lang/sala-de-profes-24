@@ -49,7 +49,16 @@ export type FudoExpense = {
   providerId: string | null
   /** ids de los Ingredient comprados (para cruzar con stock_items.fudo_ingredient_id) */
   ingredientIds: string[]
-  date: string // ISO del primer payment no cancelado
+  /**
+   * Cuándo se cargó la compra en Fudo (ISO). Antes era el primer pago vigente:
+   * al pagar varias Cta. Cte. juntas (Bennasar, 62 compras el 3/11 en Santa
+   * Fe) Fudo cancela la deuda y crea un pago nuevo, y compras viejas pasaban a
+   * ser "del día del pago" (el importador las trajo como nuevas). Traído de
+   * Santa Fe (ab37545).
+   */
+  date: string
+  /** Último pago vigente (ISO): cuándo se pagó, para "pagado el" */
+  pagadoAt: string
   amount: number // Σ payments no cancelados
   ingredientNames: string[]
   itemCount: number // cantidad de expenseItems con ingredient
@@ -67,6 +76,8 @@ export type FudoExpense = {
   creado: string | null
   /** Fecha de la factura que pusieron a mano (YYYY-MM-DD; puede venir mal, ej. 2020) */
   fechaFactura: string | null
+  /** Número de comprobante cargado en Fudo (ej. "6113" o "0001-00006113") */
+  numero: string | null
 }
 
 /**
@@ -169,7 +180,7 @@ export async function fetchFudoExpensesConMeta(
         // ni precio de los renglones, y sin fields[expense] no manda monto ni
         // estado (el importador leía todo en 0 y no traía nada, 4/11)
         `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product`
-        + '&fields[expense]=amount,status,canceled,createdAt,date,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
+        + '&fields[expense]=amount,status,canceled,createdAt,date,receiptNumber,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
         + `&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
@@ -227,9 +238,10 @@ export async function fetchFudoExpensesConMeta(
     if (validPayments.length === 0) continue // sin pago válido → descartar
 
     const amount = validPayments.reduce((s, p) => s + p.amount, 0)
-    // Fecha = createdAt del primer pago no cancelado (orden por createdAt asc)
+    // Fecha = cuándo se cargó el gasto; sin ese dato, el primer pago vigente
     const sortedByDate = [...validPayments].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const date = sortedByDate[0]?.createdAt || ''
+    const creadoAt = typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : ''
+    const date = creadoAt || sortedByDate[0]?.createdAt || ''
     if (!date) continue
 
     // Ingredientes: nombres, ids y detalle (qty/price) de los expenseItems
@@ -261,6 +273,7 @@ export async function fetchFudoExpensesConMeta(
       providerId: providerId ?? null,
       ingredientIds,
       date,
+      pagadoAt: sortedByDate[sortedByDate.length - 1]?.createdAt || date,
       amount: Math.round(amount * 100) / 100,
       ingredientNames: names,
       itemCount: items.length,
@@ -271,6 +284,7 @@ export async function fetchFudoExpensesConMeta(
       pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId })),
       creado: typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : null,
       fechaFactura: typeof exp.attributes?.date === 'string' ? exp.attributes.date.slice(0, 10) : null,
+      numero: typeof exp.attributes?.receiptNumber === 'string' && exp.attributes.receiptNumber.trim() ? exp.attributes.receiptNumber.trim() : null,
     })
   }
 
@@ -669,6 +683,23 @@ export async function anularEnGastoFudo(p: {
         // Sin fudoFetch: el DELETE responde sin cuerpo
         const r = await fudoHttp(`https://api.fu.do/v1alpha1/expense-items/${encodeURIComponent(item.id)}`, { method: 'DELETE' })
         if (!r.ok && r.status !== 404) throw new Error(`Fudo API ${r.status} al quitar el renglón ${item.id}`)
+        // Bennasar #2432 (Santa Fe, 9/11): el DELETE no sacaba el renglón (404 se
+        // tomaba como "ya no está"). La app descontaba el stock y, al anular el
+        // gasto con el último recibo, Fudo devolvía el de TODOS sus renglones:
+        // papas y cebolla quedaron descontadas dos veces. Si el renglón sigue,
+        // se deja en cero (así al anular el gasto no devuelve nada de él); si
+        // tampoco se puede, no se anula el recibo (error, sin tocar nada más).
+        // Traído de Santa Fe (3815e33).
+        const sigue = (await leerGastoParaAjuste(p.expenseId))?.items.find((i) => i.id === item.id)
+        if (sigue && sigue.qty !== 0) {
+          await fudoFetch(`/expense-items/${encodeURIComponent(item.id)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: { id: item.id, type: 'ExpenseItem', attributes: { quantity: 0, price: 0 } } }),
+          })
+          const otraVez = (await leerGastoParaAjuste(p.expenseId))?.items.find((i) => i.id === item.id)
+          if (otraVez && otraVez.qty !== 0) throw new Error(`Fudo no deja sacar el renglón ${item.id} del gasto #${p.expenseId}`)
+        }
       }
       const nuevoMonto = redondo(g.amount - p.monto)
       if (nuevoMonto > 0) {

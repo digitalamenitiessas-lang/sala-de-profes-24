@@ -409,7 +409,7 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
       return null
     })()
     // Pagado: con la fecha del pago en Fudo (si no, en "Pagados" quedaba sin fecha)
-    const pago = { payment_status: deuda ? 'a_pagar' : 'pagado', payment_method: medioPago, paid_at: deuda ? null : gasto.date }
+    const pago = { payment_status: deuda ? 'a_pagar' : 'pagado', payment_method: medioPago, paid_at: deuda ? null : gasto.pagadoAt }
     const itemsDeLaFactura = new Set([
       ...gasto.items.map((i) => itemByIngId.get(i.ingredientId)?.id),
       ...gasto.productItems.map((i) => itemByProdId.get(i.productId)?.id),

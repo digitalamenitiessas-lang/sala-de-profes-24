@@ -10,7 +10,7 @@ import { notifyEvent } from '@/lib/push/notify-event'
 import { getConsumptionContextWithTimeout } from '@/lib/stock/consumption'
 import { conCargadoPor, NOTA_IMPUESTOS, parseDatosGasto, type DatosGasto } from '@/lib/compras/datos-gasto'
 import { fraccionADecimal } from '@/lib/compras/lista-pegada'
-import { esFacturaEnFudo, marcarFacturaPendiente, MODO_FACTURA_PENDIENTE, sumarStockSinRenglon, vincularSiYaEstaEnFudo } from '@/lib/compras/factura-en-fudo'
+import { esFacturaEnFudo, esReciboDeFudo, facturaYaEnFudo, marcarFacturaPendiente, MODO_FACTURA_PENDIENTE, sumarStockSinRenglon, textoFacturaYaEnFudo, vincularSiYaEstaEnFudo } from '@/lib/compras/factura-en-fudo'
 import type { KitchenOrderCategoryValue, KitchenOrderUrgencyValue, PriorityValue } from '@/types/database'
 
 // ---------------------------------------------------------------------------
@@ -392,6 +392,18 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, error: 'Elegí cómo se paga' }, { status: 400 })
       }
 
+      // La factura ya está cargada en Fudo: "Llegó todo" la duplicaría (con
+      // fecha de hoy y stock de nuevo). Se frena antes de tocar nada.
+      if (!facturaEnFudo && gasto?.numero) {
+        let provFactura = typeof proveedorElegido === 'string' && proveedorElegido ? proveedorElegido : null
+        if (!provFactura && items[0]) {
+          const { data: o } = await admin.from(items[0].source === 'barra' ? 'bar_orders' : 'kitchen_orders').select('supplier_id').eq('id', items[0].orderId).maybeSingle()
+          provFactura = (o as { supplier_id?: string | null } | null)?.supplier_id ?? null
+        }
+        const enFudo = await facturaYaEnFudo(admin, provFactura, gasto.numero).catch(() => null)
+        if (enFudo) return NextResponse.json({ success: false, error: textoFacturaYaEnFudo(gasto.numero, enFudo), facturaEnFudo: enFudo.id }, { status: 409 })
+      }
+
       // Lo que llegó sin estar en el pedido: se crea como pedido "en camino"
       // de ese proveedor y se recibe junto con el resto (mismo pago, misma
       // factura, mismo gasto en Fudo). Sin avisos: ya está acá.
@@ -733,15 +745,19 @@ export async function POST(request: NextRequest) {
       if (!/^\d{1,10}$/.test(idGasto)) return NextResponse.json({ success: false, error: 'Elegí el gasto de Fudo' }, { status: 400 })
       if (!Array.isArray(items) || items.length === 0 || items.length > 60) return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
 
-      // El mismo gasto no se vincula dos veces (recibos o pedidos)
-      const [{ count: enRecibos }, { count: enCocina }, { count: enBarra }] = await Promise.all([
-        admin.from('stock_receipts').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
-        admin.from('kitchen_orders').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
-        admin.from('bar_orders').select('id', { count: 'exact', head: true }).eq('fudo_expense_id', idGasto),
-      ])
-      if ((enRecibos ?? 0) + (enCocina ?? 0) + (enBarra ?? 0) > 0) {
-        return NextResponse.json({ success: false, error: `El gasto #${idGasto} ya está vinculado en la app` }, { status: 409 })
+      // Un gasto que creó la app con "Llegó" no se vincula a otros pedidos. Uno
+      // cargado en Fudo sí, aunque la app ya lo haya importado (en la 24 el
+      // importador trae casi todo en minutos, y "Vincular" lo rechazaba por
+      // "ya vinculado"): los pedidos se cuelgan de sus recibos importados, sin
+      // otro recibo ni monto repetido. Traído de Santa Fe (5b02f9f).
+      const { data: recibosDelGasto } = await admin.from('stock_receipts')
+        .select('id, note, stock_item_id, order_id, cost_total').eq('fudo_expense_id', idGasto)
+      const filasGasto = (recibosDelGasto ?? []) as { id: number; note: string | null; stock_item_id: string | null; order_id: number | null; cost_total: number | null }[]
+      if (filasGasto.some((r) => !esReciboDeFudo(r.note))) {
+        return NextResponse.json({ success: false, error: `El gasto #${idGasto} lo cargó la app con "Llegó": ya está vinculado` }, { status: 409 })
       }
+      const yaImportado = filasGasto.some((r) => (r.note ?? '').startsWith('Importado desde Fudo'))
+      const importadosLibres = filasGasto.filter((r) => (r.note ?? '').startsWith('Importado desde Fudo') && r.stock_item_id && !r.order_id)
       const { leerGastoFudo } = await import('@/lib/fudo/expenses')
       const g = await leerGastoFudo(idGasto)
       if (!g) return NextResponse.json({ success: false, error: `No encontré el gasto #${idGasto} en Fudo` }, { status: 404 })
@@ -775,6 +791,24 @@ export async function POST(request: NextRequest) {
         const total = linea && linea.total > 0 ? Math.round(linea.total * 100) / 100 : null
         const ahoraIso = new Date().toISOString()
 
+        // Factura ya importada con este insumo: el pedido se cuelga de ese
+        // recibo (ya tiene monto; el stock lo trae Fudo, la 24 lo copia)
+        const importado = order.stock_item_id ? importadosLibres.find((r) => r.stock_item_id === order.stock_item_id) : undefined
+        if (importado) {
+          importadosLibres.splice(importadosLibres.indexOf(importado), 1)
+          await admin.from('stock_receipts').update({ order_id: order.id, order_source: it.source }).eq('id', importado.id)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error: upErr } = await (admin.from(tabla) as any).update({
+            status: 'received', received_qty: pendiente ? order.received_qty : qty, received_at: pendiente ? order.received_at ?? ahoraIso : ahoraIso,
+            ...(pendiente ? {} : { received_by: user.id }),
+            received_mode: 'fudo_expense', fudo_expense_id: idGasto, fudo_amount: importado.cost_total,
+            received_note: `Factura ya cargada en Fudo (gasto #${idGasto}): sin sumar stock acá`,
+            updated_at: ahoraIso,
+          }).eq('id', order.id)
+          resultados.push(upErr ? { orderId: it.orderId, ok: false, error: upErr.message } : { orderId: it.orderId, ok: true, conImporte: importado.cost_total != null })
+          continue
+        }
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error: recErr } = await (admin.from('stock_receipts') as any).insert({
           stock_item_id: order.stock_item_id,
@@ -783,8 +817,9 @@ export async function POST(request: NextRequest) {
           order_id: order.id,
           qty,
           unit: si?.unit ?? null,
-          cost_total: total,
-          cost_per_unit: total != null ? Math.round((total / qty) * 10000) / 10000 : null,
+          // Ya importada: el monto está en sus recibos importados (no se repite)
+          cost_total: yaImportado ? null : total,
+          cost_per_unit: !yaImportado && total != null ? Math.round((total / qty) * 10000) / 10000 : null,
           note: `Pedido: ${order.product_name} (${order.quantity}) — cargado directo en Fudo (gasto #${idGasto})`,
           received_by: user.id,
           received_date: fechaAR,
@@ -1104,6 +1139,11 @@ async function confirmarLlegada(
     .single()
   if (fetchErr || !order) return respuesta({ success: false, error: 'Pedido no encontrado' }, { status: 404 })
   if (order.status === 'received') return respuesta({ success: false, error: 'El pedido ya fue recibido' }, { status: 409 })
+  // La factura ya está cargada en Fudo: "Llegó" la duplicaría (con fecha de hoy y stock de nuevo)
+  if (!skipFudoExpense && gasto?.numero) {
+    const enFudo = await facturaYaEnFudo(admin, order.supplier_id, gasto.numero).catch(() => null)
+    if (enFudo) return respuesta({ success: false, error: textoFacturaYaEnFudo(gasto.numero, enFudo), facturaEnFudo: enFudo.id }, { status: 409 })
+  }
 
   // Un gasto de Fudo explica UN pedido: si ya está vinculado a otro
   // (cocina o barra), rechazar antes de tocar nada. Tolerante a migración
