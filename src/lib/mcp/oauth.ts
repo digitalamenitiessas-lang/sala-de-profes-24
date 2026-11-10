@@ -51,6 +51,20 @@ export function validarPedido(p: Record<string, string | undefined>): { ok: true
   return { ok: true, pedido: { clientId: p.client_id, redirectUri: p.redirect_uri, codeChallenge: p.code_challenge!, state: p.state || null, scope: SCOPE } }
 }
 
+/**
+ * ¿El POST salió de nuestra propia pantalla de permiso? (contra envíos desde
+ * otros sitios). Lo normal es Origin = MCP_BASE. Pero algunos navegadores
+ * mandan Origin "null" aunque el pedido sea del mismo sitio (pasaba con
+ * Referrer-Policy no-referrer y le bloqueó el permiso a un socio, 11/2026):
+ * en ese caso decide Sec-Fetch-Site, que lo pone el navegador y una página
+ * no puede falsificar.
+ */
+export function vieneDeLaApp(request: Request): boolean {
+  const origin = request.headers.get('origin')
+  if (origin === MCP_BASE) return true
+  return (origin === null || origin === 'null') && request.headers.get('sec-fetch-site') === 'same-origin'
+}
+
 /** Nombre para la auditoría */
 export async function nombreDe(admin: SupabaseClient, userId: string): Promise<string | null> {
   const { data } = await admin.from('profiles').select('first_name, last_name').eq('id', userId).maybeSingle()

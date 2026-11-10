@@ -23,7 +23,9 @@ const nextConfig: NextConfig = {
       headers: [
         { key: 'X-Frame-Options', value: 'DENY' },
         { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
-        { key: 'Referrer-Policy', value: 'no-referrer' },
+        // same-origin y no no-referrer: con no-referrer el navegador manda Origin "null"
+        // al tocar Permitir y el control de origen lo rechazaba
+        { key: 'Referrer-Policy', value: 'same-origin' },
       ],
     }]
   },

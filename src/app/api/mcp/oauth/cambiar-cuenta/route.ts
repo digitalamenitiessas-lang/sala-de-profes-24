@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { getSupabaseEnv } from '@/lib/supabase/env'
-import { MCP_BASE } from '@/lib/mcp/oauth'
+import { MCP_BASE, vieneDeLaApp } from '@/lib/mcp/oauth'
 
 // POST /api/mcp/oauth/cambiar-cuenta — desde la pantalla de permiso: cierra la
 // sesión SOLO en este navegador (no en el resto de los dispositivos de esa
@@ -9,7 +9,10 @@ import { MCP_BASE } from '@/lib/mcp/oauth'
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
-  if (request.headers.get('origin') !== MCP_BASE) return NextResponse.json({ error: 'Origen no permitido' }, { status: 403 })
+  if (!vieneDeLaApp(request)) {
+    console.warn('[mcp] POST rechazado por origen', { origin: request.headers.get('origin'), secFetchSite: request.headers.get('sec-fetch-site') })
+    return NextResponse.json({ error: 'Origen no permitido' }, { status: 403 })
+  }
   const next = String((await request.formData()).get('next') ?? '')
   const destino = new URL('/login', MCP_BASE)
   // Solo se vuelve a la pantalla de permiso, nunca a otra dirección

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { crearCodigo, esSocioActivo, MCP_BASE, nombreDe, validarPedido } from '@/lib/mcp/oauth'
+import { crearCodigo, esSocioActivo, nombreDe, validarPedido, vieneDeLaApp } from '@/lib/mcp/oauth'
 import { logAudit } from '@/lib/audit'
 
 // POST /api/mcp/oauth/authorize — el botón de la pantalla /mcp/autorizar.
@@ -10,7 +10,10 @@ import { logAudit } from '@/lib/audit'
 export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
-  if (request.headers.get('origin') !== MCP_BASE) return NextResponse.json({ error: 'Origen no permitido' }, { status: 403 })
+  if (!vieneDeLaApp(request)) {
+    console.warn('[mcp] POST rechazado por origen', { origin: request.headers.get('origin'), secFetchSite: request.headers.get('sec-fetch-site') })
+    return NextResponse.json({ error: 'Origen no permitido' }, { status: 403 })
+  }
   const form = await request.formData()
   const campos = Object.fromEntries([...form.entries()].map(([k, v]) => [k, String(v)]))
   const v = validarPedido(campos)
