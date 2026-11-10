@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guía de compras · Sala de Profes</title>
+<!--
+  Versión general (24 y Santa Fe) de public/guias/compras.html, para
+  compartir con el equipo. El PDF se genera desde este archivo
+  (Chrome --headless --print-to-pdf): si se cambia algo acá, regenerarlo.
+-->
+<style>
+  @font-face { font-family: 'Barlow'; src: url('../public/fonts/Barlow-Regular.ttf'); font-weight: 400; }
+  @font-face { font-family: 'Barlow'; src: url('../public/fonts/Barlow-SemiBold.ttf'); font-weight: 600; }
+  @font-face { font-family: 'Barlow'; src: url('../public/fonts/Barlow-Bold.ttf'); font-weight: 700; }
+  @font-face { font-family: 'Playfair'; src: url('../public/fonts/PlayfairDisplay-Bold.ttf'); font-weight: 700; }
+  :root {
+    --sucursal: #1f3a5f; --verde: #006d5a; --texto: #3d2c24; --suave: #7d6c64;
+    --fondo: #faf8f5; --tarjeta: #ffffff; --linea: #ebe6df; --aviso: #fdf6ec; --aviso-texto: #8b5e34;
+    --rojo: #c0392b; --rojo-fondo: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto); font: 15px/1.5 'Barlow', system-ui, sans-serif; }
+  .hoja { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+  header { background: var(--sucursal); color: #fff; padding: 22px 16px 18px; margin: 0 -16px 18px; }
+  header .hoja { padding-bottom: 0; }
+  header small { display: block; letter-spacing: .12em; font-size: 11px; opacity: .7; text-transform: uppercase; }
+  h1 { font-family: 'Playfair', Georgia, serif; font-size: 27px; line-height: 1.15; margin: 4px 0 6px; }
+  header p { margin: 0; opacity: .85; font-size: 14px; }
+  h2 { font-family: 'Playfair', Georgia, serif; font-size: 19px; margin: 26px 0 10px; color: var(--sucursal); }
+  h3 { font-size: 16px; margin: 0 0 6px; display: flex; gap: 8px; align-items: baseline; }
+  h3 .n { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--sucursal); color: #fff; font-size: 13px; display: inline-flex; align-items: center; justify-content: center; transform: translateY(2px); }
+  .tarjeta { background: var(--tarjeta); border: 1px solid var(--linea); border-radius: 14px; padding: 14px 16px; margin: 0 0 12px; break-inside: avoid; }
+  .esencial { background: var(--sucursal); color: #fff; border: 0; }
+  .esencial h2 { color: #fff; margin-top: 0; }
+  .esencial li { margin-bottom: 6px; }
+  ol, ul { margin: 6px 0 0; padding-left: 20px; }
+  li { margin-bottom: 3px; }
+  b, strong { font-weight: 700; }
+  .boton { display: inline-block; background: var(--verde); color: #fff; border-radius: 6px; padding: 0 6px; font-weight: 600; font-size: 13.5px; white-space: nowrap; }
+  .esencial .boton { background: #fff; color: var(--sucursal); }
+  .fudo { margin-top: 8px; font-size: 13.5px; color: var(--suave); border-top: 1px dashed var(--linea); padding-top: 6px; }
+  .fudo b { color: var(--texto); }
+  .ojo { background: var(--aviso); color: var(--aviso-texto); border-radius: 10px; padding: 8px 10px; margin-top: 8px; font-size: 13.5px; }
+  .mal { background: var(--rojo-fondo); border-color: #f5c6c0; }
+  .mal li::marker { color: var(--rojo); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 7px 6px; border-bottom: 1px solid var(--linea); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { width: 52%; }
+  .pie { margin-top: 24px; font-size: 12.5px; color: var(--suave); text-align: center; }
+  .imprimir { display: inline-block; margin: 12px 6px 0 0; text-decoration: none; background: #fff; color: var(--sucursal); border: 0; border-radius: 10px; padding: 7px 12px; font: 600 13px 'Barlow', sans-serif; cursor: pointer; }
+  @media (max-width: 480px) { h1 { font-size: 23px; } td:first-child { width: 48%; } }
+  @media print {
+    @page { size: A4; margin: 12mm 12mm 14mm; }
+    body { background: #fff; font-size: 9.7pt; line-height: 1.38; }
+    h1 { font-size: 21pt; }
+    h2 { font-size: 14pt; margin: 14px 0 8px; break-after: avoid; }
+    .tarjeta { padding: 9px 12px; margin-bottom: 8px; }
+    td { padding: 5px 6px; }
+    header { margin: 0 0 14px; border-radius: 10px; padding: 14px 16px; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .esencial, .boton, h3 .n, .ojo, .mal { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .hoja { max-width: none; padding: 0; }
+    .imprimir { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="hoja">
+    <small>Sala de Profes · La Vieja Escuela · 24 y Maipú y Santa Fe</small>
+    <h1>Guía de compras</h1>
+    <p>Todo se carga en Fudo y se refleja en Sala de Profes: compras, comprobantes, pagos y el Excel para conciliar.</p>
+  </div>
+</header>
+
+<main class="hoja">
+
+<section class="tarjeta esencial">
+  <h2>Lo esencial</h2>
+  <ol>
+    <li><b>Toda compra se carga en Fudo</b>: factura (A, B o C), remito, recibo o sin comprobante. Con el <b>proveedor</b>, <b>todos los productos</b>, el <b>total</b> y <b>cómo se pagó</b>. En Sala de Profes aparece sola en menos de 10 minutos.</li>
+    <li><b>En Sala de Profes solo se marca que llegó</b> (<span class="boton">Llegó</span> o <span class="boton">Llegó todo</span>), sin precios ni pago. El pedido se cierra solo cuando la compra está en Fudo.</li>
+    <li><b>Se paga en Fudo.</b> Cuando se paga allá, en Sala de Profes se marca pagada sola.</li>
+    <li><b>Una compra, una sola carga</b>: no la carguen dos veces en Fudo ni la "carguen" en la app.</li>
+  </ol>
+</section>
+
+<h2>¿Qué pasó? ¿Dónde lo cargo?</h2>
+<section class="tarjeta">
+  <table>
+    <tr><td>Llegó mercadería de un pedido</td><td>Fudo: cargar la compra. App: <span class="boton">Llegó</span> o <span class="boton">Llegó todo</span></td></tr>
+    <tr><td>Compra sin pedido (súper, verdulería, envío, hielo)</td><td>Solo en <b>Fudo</b></td></tr>
+    <tr><td>Un producto del pedido no vino</td><td>App, en Llegó todo: <b>Sigue en camino</b> o <b>No vino</b></td></tr>
+    <tr><td>¿Qué llegó y falta cargar en Fudo?</td><td>App: Compras → Recibidos → <b>Compras para cargar en Fudo</b></td></tr>
+    <tr><td>Pagar a un proveedor</td><td>En <b>Fudo</b> (la app lo marca pagado sola)</td></tr>
+    <tr><td>Ver qué se debe o armar el pago</td><td>App: Compras → Pagos → <b>Cuentas por pagar</b>, o el Excel</td></tr>
+    <tr><td>Excel de comprobantes y pagos</td><td>App: Compras → Historial y descargas → <b>Excel de comprobantes y pagos (Fudo)</b></td></tr>
+    <tr><td>Me equivoqué al cargar</td><td>Corregirlo en <b>Fudo</b></td></tr>
+  </table>
+</section>
+
+<h2>Paso a paso</h2>
+
+<section class="tarjeta">
+  <h3><span class="n">1</span> Llegó mercadería</h3>
+  <p style="margin:0 0 4px"><b>En Fudo</b> (quien está en la caja, cuando llega el proveedor o cuando mandan el comprobante):</p>
+  <ol>
+    <li>Cargá el gasto con el <b>proveedor</b> correcto (el mismo del pedido) y <b>todos los productos</b> con su cantidad y precio.</li>
+    <li>Tipo y número de comprobante, y si es Factura A, <b>IVA</b> e <b>IIBB</b>. El <b>total</b> tal cual el comprobante.</li>
+    <li>Cómo se pagó: efectivo (sale de la caja), transferencia o <b>cuenta corriente</b> si se paga después.</li>
+  </ol>
+  <p style="margin:8px 0 4px"><b>En Sala de Profes</b> (quien recibe):</p>
+  <ol>
+    <li>En camino → <span class="boton">Llegó</span> (o <span class="boton">Llegó todo</span>). Elegí el comprobante y, si querés, el número.</li>
+    <li>Marcá <b>qué llegó y cuánto</b>. No pide precio ni pago.</li>
+  </ol>
+  <div class="ojo">El orden no importa. Si la compra ya está en Fudo, se vincula en el momento; si no, queda en <b>Recibidos → Compras para cargar en Fudo</b> y se vincula sola cuando la cargan (en menos de 10 minutos).</div>
+  <p class="fudo">El <b>stock entra con la compra en Fudo</b>: por eso tiene que tener <b>los productos</b>. Si se carga solo el total, no suma stock y no se vincula sola: en Compras para cargar en Fudo → <b>Ya está en Fudo</b> se elige a mano.</p>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">2</span> Compra sin pedido (súper, verdulería, envío, hielo…)</h3>
+  <ol>
+    <li>Se carga <b>solo en Fudo</b>, igual que el punto 1: proveedor, productos, total y cómo se pagó.</li>
+    <li>En Sala de Profes no hay que hacer nada: aparece sola en Compras.</li>
+  </ol>
+  <div class="ojo">Si el proveedor no existe, créenlo en Fudo y después toquen <b>Proveedores → Sync Fudo</b> en la app.</div>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">3</span> Pagar a proveedores</h3>
+  <ol>
+    <li>Se paga en <b>Fudo</b> (orden de pago o el pago del gasto). En Sala de Profes se marca pagado solo, en menos de 10 minutos.</li>
+    <li>Para ver qué se debe: Compras → Pagos → <b>Cuentas por pagar</b> (por proveedor). En la app dice <b>"Se paga en Fudo"</b>: no hay botón de pagar.</li>
+    <li>Para armar el pago: <b>Resumen para pagar</b> o el <b>Excel de comprobantes y pagos</b> (punto 5).</li>
+  </ol>
+  <p class="fudo">Lo viejo cargado solo en la app (sin gasto en Fudo) se sigue pagando desde la app, con <b>Pagar</b>.</p>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">4</span> El producto no aparece</h3>
+  <ul>
+    <li>Todo lo que se compra <b>tiene que existir en Fudo</b> y tener <b>"Controlar stock"</b> marcado. Al día siguiente aparece solo en la app (o en el momento con <b>Control → Crear todos en LVE</b>).</li>
+    <li>Al armar un pedido, <b>elijan el producto de la lista</b> en vez de escribirlo: escrito a mano no se vincula solo con la compra de Fudo.</li>
+    <li>Si es un producto (gaseosa, descartable) y no aparece al armar un pedido, le falta el proveedor: <b>Proveedores → Vínculos y días de pedido</b>.</li>
+  </ul>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">5</span> Excel de comprobantes y pagos</h3>
+  <ol>
+    <li>Compras → <b>Historial y descargas</b> → elegí el período (<b>Hoy</b>, <b>Esta semana</b>, <b>Semana pasada</b>, <b>Este mes</b>, <b>Mes pasado</b>…).</li>
+    <li>Tocá <b>Excel de comprobantes y pagos (Fudo)</b>.</li>
+  </ol>
+  <table>
+    <tr><td><b>Comprobantes</b></td><td>Una fila por comprobante: fecha, proveedor, tipo, número, categoría, total, si está pagado, lo que se debe, cuándo y cómo se pagó.</td></tr>
+    <tr><td><b>Por proveedor</b></td><td>Total, pagado y a pagar de cada proveedor.</td></tr>
+    <tr><td><b>Pagos del período</b></td><td>Lo que se pagó en esas fechas (aunque la compra sea de antes).</td></tr>
+    <tr><td><b>Detalle</b></td><td>Los productos de cada comprobante.</td></tr>
+  </table>
+</section>
+
+<section class="tarjeta">
+  <h3><span class="n">6</span> Me equivoqué</h3>
+  <ol>
+    <li>Se corrige <b>en Fudo</b>, donde se cargó (monto, productos o anular el gasto).</li>
+    <li>Si en la app marcaron "Llegó" por error: Compras → Recibidos → <b>Corregir recepción</b>.</li>
+  </ol>
+  <div class="ojo">Todos los días a las 20, Sala de Profes revisa las compras contra Fudo y avisa si algo no coincide (una compra cargada dos veces, productos que no suman el total, algo que llegó y no está en Fudo, una deuda distinta). Si llega el aviso, revísenlo ese día.</div>
+</section>
+
+<section class="tarjeta mal">
+  <h3>Lo que desordena (evitar)</h3>
+  <ul>
+    <li>Cargar una compra en Fudo <b>sin los productos</b> o con <b>otro proveedor</b>: no suma stock ni se vincula sola.</li>
+    <li>Cargar la misma compra <b>dos veces</b> en Fudo.</li>
+    <li>Cargar productos <b>repetidos</b> en una compra (los productos tienen que sumar el total).</li>
+    <li>Escribir a mano en el pedido un producto que existe en la lista.</li>
+  </ul>
+</section>
+
+<p class="pie">¿Una situación que no está acá? Avisen y la sumamos. · Actualizada el 9/11/2026</p>
+</main>
+</body>
+</html>
