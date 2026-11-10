@@ -25,6 +25,7 @@ import type { SugerenciasPayload, SugerenciaCompra } from '@/lib/compras/sugeren
 import { PAYMENT_METHODS, esComprable, money, parseQty, type ConciliarPayload, type Order, type PaymentMethod, type Profile, type StockLite, type Supplier } from './_components/shared'
 import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
+import { TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
 import { FacturasPendientes } from './_components/FacturasPendientes'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { coincideBusqueda } from '@/lib/buscar'
@@ -220,17 +221,17 @@ function PedidosContent() {
     const supabase = createClient()
     const { data, error } = await supabase
       .from('stock_receipts')
-      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, order_id, suppliers:supplier_id(name)')
+      .select('id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, order_id, fudo_expense_id, suppliers:supplier_id(name)')
       .eq('payment_status', 'a_pagar')
       .order('received_date', { ascending: false })
       // Todos los "a pagar" (con 300 los más viejos quedaban afuera del saldo)
       .limit(5000)
     if (!error && data) {
-      type RawReceipt = Omit<ReceiptRow, 'supplier_name' | 'fudo_expense_id'> & { suppliers: { name: string } | null; order_id: number | null }
+      type RawReceipt = Omit<ReceiptRow, 'supplier_name' | 'fudo_expense_id'> & { suppliers: { name: string } | null; order_id: number | null; fudo_expense_id: string | null }
       const rows = (data as unknown as RawReceipt[]).map((r) => ({
         ...r,
         supplier_name: r.suppliers?.name ?? 'Sin proveedor',
-        fudo_expense_id: null as string | null,
+        fudo_expense_id: (r.fudo_expense_id ?? null) as string | null,
       }))
       // Segunda query: obtener fudo_expense_id de kitchen_orders para los order_id presentes
       const orderIds = rows.map((r) => r.order_id).filter((id): id is number => id !== null)
@@ -243,7 +244,7 @@ function PedidosContent() {
           ((koData ?? []) as { id: number; fudo_expense_id: string | null }[]).map((ko) => [ko.id, ko.fudo_expense_id ?? null]),
         )
         for (const row of rows) {
-          if (row.order_id !== null) row.fudo_expense_id = fudoMap.get(row.order_id) ?? null
+          if (row.order_id !== null && !row.fudo_expense_id) row.fudo_expense_id = fudoMap.get(row.order_id) ?? null
         }
       }
       setReceipts(rows.filter((r) => !faltaPrecio(r.cost_total)))
@@ -1162,7 +1163,9 @@ function PedidosContent() {
                               <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">
                                 {money(Number(r.cost_total) || 0)}
                               </span>
-                              {!isPaying ? (
+                              {TODO_EN_FUDO && r.fudo_expense_id ? (
+                                <span className="shrink-0 rounded-lg bg-[#eef4fc] px-2 py-1 text-[10.5px] font-semibold text-[#2f5d8a]" title="Se paga en Fudo: cuando se paga allá, acá se marca solo">Se paga en Fudo</span>
+                              ) : !isPaying ? (
                                 <button
                                   onClick={() => setReceiptPayState({ id: r.id, method: null })}
                                   className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white active:scale-95"
@@ -1511,7 +1514,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
       if (json.vinculadoA) {
         toast.success(`Llegó — la factura ya estaba en Fudo (gasto #${json.vinculadoA}): quedó vinculada`)
       } else if (json.facturaPendiente) {
-        toast.success('Llegó — falta que administración cargue la factura en Fudo')
+        toast.success('Llegó — se vincula solo cuando la compra esté cargada en Fudo')
       } else if (mode === 'lve_stock') {
         toast.success(json.fudoSynced ? 'Llegó — stock cargado en Fudo' : 'Llegó — stock registrado en LVE')
       } else {
@@ -1731,7 +1734,7 @@ function ArrivalDialog({ order, supplier, stockItems, onClose, onDone }: {
             className="flex items-center gap-2 rounded-xl bg-[#006d5a] px-5 py-2 text-sm font-semibold text-white active:scale-[0.98] disabled:opacity-60"
           >
             {submitting ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-            {facturaEnFudo ? 'Llegó (factura en Fudo)' : 'Confirmar llegada'}
+            {facturaEnFudo ? 'Llegó (se carga en Fudo)' : 'Confirmar llegada'}
           </button>
         </DialogFooter>
       </DialogContent>

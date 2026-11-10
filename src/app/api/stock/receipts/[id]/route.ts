@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { anularEnGastoFudo, corregirMontoEnGastoFudo, fudoExpensePagado, postFudoPayment } from '@/lib/fudo/expenses'
 import { asegurarGastoEnFudo, TEXTO_GASTO, type ResultadoGasto } from '@/lib/compras/gasto-fudo'
-import { NOTA_DIFERENCIA_FUDO, NOTA_IMPUESTOS } from '@/lib/compras/datos-gasto'
+import { NOTA_DIFERENCIA_FUDO, NOTA_IMPUESTOS, TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // PATCH /api/stock/receipts/[id]
@@ -104,6 +104,11 @@ export async function PATCH(
     // Marcar como pagado
     if (body.payment_status === 'pagado') {
       if (receipt.payment_status === 'pagado') return NextResponse.json({ error: 'Ya está pagado' }, { status: 409 })
+      // Todo se paga en Fudo (TODO_EN_FUDO): pagarlo también acá era un doble
+      // control. Cuando se paga allá, sincronizarPagosDesdeFudo lo marca solo.
+      if (TODO_EN_FUDO && await gastoDelRecibo(admin, receipt)) {
+        return NextResponse.json({ error: 'Esta compra se paga en Fudo: cuando se pague allá, acá se marca pagada sola (en menos de 10 minutos).' }, { status: 409 })
+      }
       const paidAt = new Date().toISOString()
       const newPaidMethod = typeof body.payment_method === 'string' && body.payment_method ? body.payment_method : null
       const update: Record<string, unknown> = { payment_status: 'pagado', paid_at: paidAt, paid_by: user.id }

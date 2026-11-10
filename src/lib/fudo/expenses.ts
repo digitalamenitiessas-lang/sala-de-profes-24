@@ -71,13 +71,20 @@ export type FudoExpense = {
   /** 'PAID' | 'UNPAID' */
   status: string | null
   /** Pagos vigentes con su medio (la deuda en Cta. Cte. es un pago con ese medio) */
-  pagos: { amount: number; paymentMethodId: string | null }[]
+  pagos: { amount: number; paymentMethodId: string | null; createdAt: string }[]
   /** Cuándo se cargó en Fudo (ISO). `date` es el primer pago: si se pagó después, es el día del pago */
   creado: string | null
   /** Fecha de la factura que pusieron a mano (YYYY-MM-DD; puede venir mal, ej. 2020) */
   fechaFactura: string | null
   /** Número de comprobante cargado en Fudo (ej. "6113" o "0001-00006113") */
   numero: string | null
+  /** Tipo de comprobante en Fudo (ReceiptType: Factura A/B/C, Recibo, Remito) */
+  tipoComprobanteId: string | null
+  /** Categoría de gasto en Fudo (ExpenseCategory) */
+  categoriaId: string | null
+  /** Vencimiento (YYYY-MM-DD) y descripción, como en Fudo */
+  vence: string | null
+  descripcion: string | null
 }
 
 /**
@@ -180,7 +187,7 @@ export async function fetchFudoExpensesConMeta(
         // ni precio de los renglones, y sin fields[expense] no manda monto ni
         // estado (el importador leía todo en 0 y no traía nada, 4/11)
         `/expenses?include=payments,provider,expenseItems.ingredient,expenseItems.product`
-        + '&fields[expense]=amount,status,canceled,createdAt,date,receiptNumber,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
+        + '&fields[expense]=amount,status,canceled,createdAt,date,receiptNumber,receiptType,expenseCategory,dueDate,description,provider,payments,expenseItems&fields[expenseItem]=price,quantity,ingredient,product'
         + `&page[size]=${pageSize}&page[number]=${page}`,
       )
       const data = Array.isArray(res.data) ? res.data : []
@@ -235,12 +242,16 @@ export async function fetchFudoExpensesConMeta(
       .map((p) => payments.get(p.id))
       .filter((p): p is { amount: number; canceled: boolean; createdAt: string; paymentMethodId: string | null } => !!p && !p.canceled)
 
-    if (validPayments.length === 0) continue // sin pago válido → descartar
+    // Sin ningún pago (ni la deuda en Cta. Cte.) también es un gasto: "a
+    // pagar" sin medio. Antes se descartaba y no llegaba ni al importador.
+    const creadoAt = typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : ''
+    if (validPayments.length === 0 && !creadoAt) continue
 
-    const amount = validPayments.reduce((s, p) => s + p.amount, 0)
+    const amount = validPayments.length > 0
+      ? validPayments.reduce((s, p) => s + p.amount, 0)
+      : Number(exp.attributes?.amount ?? 0) || 0
     // Fecha = cuándo se cargó el gasto; sin ese dato, el primer pago vigente
     const sortedByDate = [...validPayments].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const creadoAt = typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : ''
     const date = creadoAt || sortedByDate[0]?.createdAt || ''
     if (!date) continue
 
@@ -281,10 +292,14 @@ export async function fetchFudoExpensesConMeta(
       productItems,
       montoGasto: Math.round((Number(exp.attributes?.amount ?? amount) || 0) * 100) / 100,
       status: typeof exp.attributes?.status === 'string' ? exp.attributes.status : null,
-      pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId })),
+      pagos: validPayments.map((p) => ({ amount: p.amount, paymentMethodId: p.paymentMethodId, createdAt: p.createdAt })),
       creado: typeof exp.attributes?.createdAt === 'string' ? exp.attributes.createdAt : null,
       fechaFactura: typeof exp.attributes?.date === 'string' ? exp.attributes.date.slice(0, 10) : null,
       numero: typeof exp.attributes?.receiptNumber === 'string' && exp.attributes.receiptNumber.trim() ? exp.attributes.receiptNumber.trim() : null,
+      tipoComprobanteId: relOne(exp.relationships, 'receiptType')?.id ?? null,
+      categoriaId: relOne(exp.relationships, 'expenseCategory')?.id ?? null,
+      vence: typeof exp.attributes?.dueDate === 'string' ? exp.attributes.dueDate.slice(0, 10) : null,
+      descripcion: typeof exp.attributes?.description === 'string' && exp.attributes.description.trim() ? exp.attributes.description.trim() : null,
     })
   }
 

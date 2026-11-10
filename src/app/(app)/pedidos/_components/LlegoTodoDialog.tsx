@@ -174,7 +174,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
       }
       if (json.recibidos > 0 && json.facturaPendiente) {
         const pendientes = json.recibidos - (json.vinculados ?? 0)
-        toast.success(`Llegaron ${json.recibidos} producto${json.recibidos === 1 ? '' : 's'} de ${supplier?.name ?? 'el proveedor'}${pendientes > 0 ? ': falta que administración cargue la factura en Fudo' : ': la factura ya estaba en Fudo y quedó vinculada'}`)
+        toast.success(`Llegaron ${json.recibidos} producto${json.recibidos === 1 ? '' : 's'} de ${supplier?.name ?? 'el proveedor'}${pendientes > 0 ? ': se vinculan solos cuando la compra esté cargada en Fudo' : ': la compra ya estaba en Fudo y quedó vinculada'}`)
       } else if (json.recibidos > 0) {
         const quedan = filas.length - llegan.length - noVienen.length
         if (json.agregados > 0) toast.success(json.agregados === 1 ? 'Lo que llegó de más quedó registrado' : `Los ${json.agregados} que llegaron de más quedaron registrados`)
@@ -521,7 +521,7 @@ export function LlegoTodoDialog({ supplier: proveedorDelPedido, suppliers = [], 
           >
             {enviando ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
             {cuantosLlegan > 0
-              ? facturaEnFudo ? `Llegaron ${cuantosLlegan} (factura en Fudo)` : `Confirmar ${cuantosLlegan} producto${cuantosLlegan === 1 ? '' : 's'}`
+              ? facturaEnFudo ? `Llegaron ${cuantosLlegan} (se carga en Fudo)` : `Confirmar ${cuantosLlegan} producto${cuantosLlegan === 1 ? '' : 's'}`
               : (noVienen.length === 1 ? 'Marcar 1 que no vino' : `Marcar ${noVienen.length} que no vinieron`)}
           </button>
         </DialogFooter>

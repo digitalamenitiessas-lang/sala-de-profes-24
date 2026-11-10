@@ -16,7 +16,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 
-type PeriodKey = 'semana' | 'mes' | 'mes_pasado' | 'tres_meses' | 'anio'
+type PeriodKey = 'hoy' | 'semana' | 'semana_pasada' | 'mes' | 'mes_pasado' | 'tres_meses' | 'anio'
 
 type ReceiptRow = {
   id: number
@@ -39,7 +39,9 @@ type SupplierGroup = {
 }
 
 const PERIODS: { key: PeriodKey; label: string }[] = [
+  { key: 'hoy', label: 'Hoy' },
   { key: 'semana', label: 'Esta semana' },
+  { key: 'semana_pasada', label: 'Semana pasada' },
   { key: 'mes', label: 'Este mes' },
   { key: 'mes_pasado', label: 'Mes pasado' },
   { key: 'tres_meses', label: '3 meses' },
@@ -50,8 +52,14 @@ function getPeriodDates(key: PeriodKey): { from: string; to: string } {
   const today = new Date()
   const fmt = (d: Date) => format(d, 'yyyy-MM-dd')
   switch (key) {
+    case 'hoy':
+      return { from: fmt(today), to: fmt(today) }
     case 'semana':
       return { from: fmt(startOfWeek(today, { weekStartsOn: 1 })), to: fmt(today) }
+    case 'semana_pasada': {
+      const lunes = startOfWeek(subWeeks(today, 1), { weekStartsOn: 1 })
+      return { from: fmt(lunes), to: fmt(new Date(lunes.getTime() + 6 * 86_400_000)) }
+    }
     case 'mes':
       return { from: fmt(startOfMonth(today)), to: fmt(today) }
     case 'mes_pasado': {
@@ -161,6 +169,15 @@ export default function GastosPage() {
         >
           <Download className="size-4" /> Descargar Excel de {PERIODS.find((p) => p.key === period)?.label.toLowerCase()}
         </a>
+        {/* Comprobantes de Fudo (todo se carga allá): para conciliar y pagar a proveedores */}
+        <a
+          href={`/api/compras/comprobantes/export?from=${getPeriodDates(period).from}&to=${getPeriodDates(period).to}`}
+          download
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-white py-2.5 text-[13px] font-semibold text-[#006d5a] ring-1 ring-[#bfdcd3] active:scale-[0.98]"
+        >
+          <Download className="size-4" /> Excel de comprobantes y pagos (Fudo)
+        </a>
+        <p className="mt-1 text-center text-[10.5px] text-[#a39e97]">Una fila por factura o comprobante, deuda por proveedor, pagos hechos y productos.</p>
       </FadeIn>
 
       {/* Resumen del período */}

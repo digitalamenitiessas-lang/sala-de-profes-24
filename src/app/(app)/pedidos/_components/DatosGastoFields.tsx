@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { COMPROBANTES, esFactura, esFacturaEnFudo, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
+import { COMPROBANTES, esFactura, esFacturaEnFudo, TODO_EN_FUDO, type CategoriaGasto, type ComprobanteTipo, type DatosGasto } from '@/lib/compras/datos-gasto'
 
 // ---------------------------------------------------------------------------
 // "Datos del gasto" en Llegó / Llegó todo: categoría (obligatoria: con eso se
@@ -70,7 +70,8 @@ const inputCls = 'w-full rounded-xl border border-[#ebe6df] bg-white px-3 py-2 t
 
 export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDatosGasto>['campos'] }) {
   const { categorias, cargando, errorFudo, categoriaId, setCategoriaId, comprobante, setComprobante, numero, setNumero, numeroAnterior } = campos
-  const facturaA = comprobante === 'factura_a'
+  // Se carga en Fudo (con TODO_EN_FUDO, cualquier comprobante): acá no hay gasto
+  const facturaA = esFacturaEnFudo({ comprobante })
   return (
     <div className="space-y-2.5 rounded-xl bg-[#faf8f5] p-3">
       <div>
@@ -117,8 +118,8 @@ export function DatosGastoFields({ campos }: { campos: ReturnType<typeof useDato
 
       {facturaA ? (
         <div className="rounded-lg bg-[#eef4fc] px-3 py-2 text-[11.5px] text-[#2f5d8a] ring-1 ring-[#cfdcf3]">
-          <p className="font-semibold">La Factura A la carga administración en Fudo</p>
-          <p className="mt-0.5">Con IVA, IIBB y el total. Acá queda solo lo que llegó: no se paga ni se crea el gasto desde la app. El stock entra cuando la factura esté en Fudo con los productos.</p>
+          <p className="font-semibold">{TODO_EN_FUDO ? 'La compra se carga en Fudo' : 'La Factura A la carga administración en Fudo'}</p>
+          <p className="mt-0.5">{TODO_EN_FUDO ? 'Con los productos, el total y cómo se pagó. ' : 'Con IVA, IIBB y el total. '}Acá queda solo lo que llegó: no se paga ni se crea el gasto desde la app. El stock entra cuando la compra esté en Fudo con los productos (se vincula sola).</p>
         </div>
       ) : (
         <label className="block">

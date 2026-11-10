@@ -106,13 +106,13 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  // 7. Pagos hechos en Fudo → recibos "a pagar" de Sala de Profes (1 vez por hora)
-  if (new Date().getMinutes() < 10) {
-    await paso('pagos_fudo', async () => {
-      const r = await sincronizarPagosDesdeFudo(admin)
-      return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
-    })
-  }
+  // 7. Pagos hechos en Fudo → recibos "a pagar" de Sala de Profes. En cada
+  //    pulso (antes 1 vez por hora): todo se paga en Fudo (TODO_EN_FUDO) y
+  //    acá tiene que verse pagado enseguida.
+  await paso('pagos_fudo', async () => {
+    const r = await sincronizarPagosDesdeFudo(admin)
+    return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
+  })
 
   // 8. Control de compras contra Fudo: desde las 20, una vez por día (después
   //    de sincronizar los pagos de esa hora)

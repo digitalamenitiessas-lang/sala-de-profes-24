@@ -385,7 +385,7 @@ export async function POST(request: NextRequest) {
       if (items.length + agregados.length === 0 || items.length + agregados.length > 60) {
         return NextResponse.json({ success: false, error: 'Entre 1 y 60 productos' }, { status: 400 })
       }
-      // Factura A: se carga en Fudo (lib/compras/factura-en-fudo). Acá solo
+      // Se carga en Fudo (TODO_EN_FUDO, o Factura A; lib/compras/factura-en-fudo). Acá solo
       // queda lo que llegó, sin pago, stock ni gasto
       const facturaEnFudo = esFacturaEnFudo(gasto)
       if (agregados.length > 0 && !paymentMethod && !facturaEnFudo) {
@@ -463,7 +463,7 @@ export async function POST(request: NextRequest) {
         for (const it of llegan) {
           const r = await marcarFacturaPendiente(admin, user.id, {
             orderId: it.orderId, source: it.source, receivedQty: it.receivedQty ?? null, stockItemId: it.stockItemId ?? null,
-            numero: gasto?.numero ?? null, nota: it.note ?? note ?? null,
+            numero: gasto?.numero ?? null, nota: it.note ?? note ?? null, comprobante: gasto?.comprobante ?? null,
           })
           const vinculadoA = r.ok ? await vincularSiYaEstaEnFudo(admin, { id: it.orderId, source: it.source }).catch(() => null) : null
           resultadosFactura.push({ orderId: it.orderId, ok: r.ok, error: r.error, vinculadoA })
@@ -473,7 +473,7 @@ export async function POST(request: NextRequest) {
           void logAudit(admin, {
             userId: user.id, userName: [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null,
             action: 'confirm_arrival_factura_pendiente', module: 'pedidos', entityType: 'kitchen_order',
-            description: `Llegaron ${recibidos} producto${recibidos === 1 ? '' : 's'} con Factura A${gasto?.numero ? ` N° ${gasto.numero}` : ''}: la factura se carga en Fudo`,
+            description: `Llegaron ${recibidos} producto${recibidos === 1 ? '' : 's'}${gasto?.numero ? ` (comprobante N° ${gasto.numero})` : ''}: la compra se carga en Fudo`,
             metadata: { resultados: resultadosFactura, numero: gasto?.numero ?? null, supplierId: proveedorElegido ?? null },
           })
         }
@@ -1116,17 +1116,17 @@ async function confirmarLlegada(
     return respuesta({ success: false, error: 'Solo encargados pueden confirmar recepciones' }, { status: 403 })
   }
   if (!skipFudoExpense) gasto = conCargadoPor(gasto, [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null)
-  // Factura A: se carga en Fudo (lib/compras/factura-en-fudo). Acá solo queda
+  // Se carga en Fudo (TODO_EN_FUDO, o Factura A; lib/compras/factura-en-fudo). Acá solo queda
   // que llegó: sin pago, stock ni gasto (el stock entra con la factura)
   if (!skipFudoExpense && esFacturaEnFudo(gasto)) {
     const stockElegido = typeof (body as { stockItemId?: unknown }).stockItemId === 'string' ? (body as { stockItemId: string }).stockItemId : null
-    const r = await marcarFacturaPendiente(admin, user.id, { orderId, source, receivedQty: receivedQty ?? null, stockItemId: stockElegido, numero: gasto?.numero ?? null, nota: note ?? null })
+    const r = await marcarFacturaPendiente(admin, user.id, { orderId, source, receivedQty: receivedQty ?? null, stockItemId: stockElegido, numero: gasto?.numero ?? null, nota: note ?? null, comprobante: gasto?.comprobante ?? null })
     if (!r.ok) return respuesta({ success: false, error: r.error }, { status: 409 })
     const vinculadoA = await vincularSiYaEstaEnFudo(admin, { id: orderId, source }).catch(() => null)
     void logAudit(admin, {
       userId: user.id, userName: [profile.first_name, profile.last_name].filter(Boolean).join(' ') || null,
       action: 'confirm_arrival_factura_pendiente', module: 'pedidos', entityType: source === 'barra' ? 'bar_order' : 'kitchen_order', entityId: String(orderId),
-      description: `Llegó el pedido #${orderId} con Factura A${gasto?.numero ? ` N° ${gasto.numero}` : ''}: ${vinculadoA ? `vinculado al gasto #${vinculadoA} de Fudo` : 'la factura se carga en Fudo'}`,
+      description: `Llegó el pedido #${orderId}${gasto?.numero ? ` (comprobante N° ${gasto.numero})` : ''}: ${vinculadoA ? `vinculado al gasto #${vinculadoA} de Fudo` : 'la compra se carga en Fudo'}`,
       metadata: { orderId, source, numero: gasto?.numero ?? null, vinculadoA },
     })
     return respuesta({ success: true, facturaPendiente: !vinculadoA, vinculadoA })

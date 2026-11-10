@@ -9,8 +9,8 @@ import { cn } from '@/lib/utils'
 import { money, type ExpenseLite, type Order, type Supplier } from './shared'
 
 // ---------------------------------------------------------------------------
-// "Facturas para cargar en Fudo": lo que llegó con Factura A y todavía no
-// tiene la factura en Fudo (received_mode 'factura_pendiente', ver
+// "Compras para cargar en Fudo": lo que llegó (con TODO_EN_FUDO, cualquier
+// comprobante; si no, solo Factura A) y todavía no está en Fudo (received_mode 'factura_pendiente', ver
 // lib/compras/factura-en-fudo). Cuando administración la carga, la app la
 // vincula sola; si no la reconoce (otro proveedor en Fudo, sin productos),
 // acá se elige el gasto a mano.
@@ -65,10 +65,10 @@ export function FacturasPendientes({ pedidos, suppliers, gastosFudo, onDone }: {
     <div className="mb-3 overflow-hidden rounded-2xl bg-white ring-1 ring-[#4a90d9]/30">
       <div className="flex items-center gap-2 bg-[#eef4fc] px-4 py-2.5">
         <FileText className="size-4 shrink-0 text-[#2f5d8a]" />
-        <p className="flex-1 text-[12.5px] font-semibold text-[#2f5d8a]">Facturas para cargar en Fudo</p>
+        <p className="flex-1 text-[12.5px] font-semibold text-[#2f5d8a]">Compras para cargar en Fudo</p>
         <span className="rounded-full bg-[#2f5d8a]/10 px-2 py-0.5 text-[11px] font-bold text-[#2f5d8a]">{grupos.length}</span>
       </div>
-      <p className="px-4 pt-2 text-[10.5px] text-[#7d6c64]">Llegaron con Factura A. Cuando administración carga la factura en Fudo (con los productos), la app la vincula sola y suma el stock.</p>
+      <p className="px-4 pt-2 text-[10.5px] text-[#7d6c64]">Llegaron y todavía no están en Fudo. Cuando se cargan en Fudo (con los productos y el mismo proveedor), la app las vincula solas y suma el stock.</p>
       <div className="divide-y divide-[#f5f0ea]">
         {grupos.map((g) => {
           const opciones = gastosFudo.filter((e) => g.supplier?.fudo_provider_id && e.providerId === g.supplier.fudo_provider_id)

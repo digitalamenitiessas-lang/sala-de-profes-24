@@ -321,9 +321,10 @@ const MAX_GASTOS_POR_PULSO = 40
 async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImportacion> {
   const resumen: ResumenImportacion = { vistos: 0, pendientes: 0, importados: 0, deudas: 0, sinVinculo: 0, fechasCorregidas: 0, noCierran: [], errores: [] }
 
-  // Desde que la app carga compras: con productos (historial, precios y stock)
-  // o con deuda en Fudo (Cta. Cte. sin pagar), así "a pagar" de la app da lo
-  // mismo que Fudo. Antes eran solo los últimos 3 días y nunca las deudas.
+  // Desde que la app carga compras, TODOS los gastos de Fudo (9/11: todo se
+  // carga en Fudo y se refleja acá): con productos (historial, precios y
+  // stock), con deuda o pagados sin productos (servicios, envíos, personal).
+  // Antes eran solo los últimos 3 días y nunca las deudas.
   let gastos: FudoExpense[] = []
   let medioLveDesdeFudo: (id: string) => Promise<string | null>
   let diaDeCompra: (g: FudoExpense) => string
@@ -331,8 +332,7 @@ async function importarGastosManuales(admin: SupabaseClient): Promise<ResumenImp
     const fudo = await import('@/lib/fudo/expenses')
     medioLveDesdeFudo = fudo.medioLveDesdeFudo
     diaDeCompra = fudo.diaDeCompra
-    gastos = (await fudo.fetchFudoExpenses(DESDE_COMPRAS_EN_APP))
-      .filter((g) => g.items.length > 0 || g.productItems.length > 0 || g.status === 'UNPAID')
+    gastos = await fudo.fetchFudoExpenses(DESDE_COMPRAS_EN_APP)
   } catch (err) {
     return { ...resumen, fallo: err instanceof Error ? err.message.slice(0, 200) : 'Fudo no respondió' }
   }

@@ -20,6 +20,10 @@ import { FadeIn } from '@/components/ui/motion'
 import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
 import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
 import { ResumenPagar } from '../_components/ResumenPagar'
+import { TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
+
+/** Todo se carga y se paga en Fudo (TODO_EN_FUDO): lo que tiene gasto allá no se paga desde acá */
+const pagaEnFudo = (r: { fudo_expense_id?: string | null }) => TODO_EN_FUDO && !!r.fudo_expense_id
 
 type Receipt = {
   id: number
@@ -33,6 +37,8 @@ type Receipt = {
   paid_at: string | null
   payment_method: string | null
   comprobante_numero?: string | null
+  /** Con TODO_EN_FUDO, lo que tiene gasto en Fudo se paga allá (acá se marca solo) */
+  fudo_expense_id?: string | null
   supplier_name: string
   supplier_phone: string | null
   supplier_contact: string | null
@@ -78,7 +84,7 @@ export default function CuentasPage() {
   const fetchData = useCallback(async () => {
     const { createClient } = await import('@/lib/supabase/client')
     const supabase = createClient()
-    const campos = 'id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, comprobante_numero, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)'
+    const campos = 'id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, comprobante_numero, fudo_expense_id, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)'
     // Los "a pagar" TODOS (antes salían de los últimos 300 recibos y los más
     // viejos quedaban afuera del saldo); de los pagados, solo los recientes.
     // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
@@ -422,9 +428,10 @@ export default function CuentasPage() {
               {isExpanded && (
                 <div className="divide-y border-t">
                   {/* Saldar el proveedor: UN medio de pago, todo o hasta una fecha de compra */}
-                  {group.receipts.length > 1 && (() => {
+                  {group.receipts.filter((r) => !pagaEnFudo(r)).length > 1 && (() => {
                     const hasta = groupPay?.key === group.key ? groupPay.hasta : ''
-                    const aSaldar = hasta ? group.receipts.filter((r) => r.received_date <= hasta) : group.receipts
+                    const pagables = group.receipts.filter((r) => !pagaEnFudo(r))
+                    const aSaldar = hasta ? pagables.filter((r) => r.received_date <= hasta) : pagables
                     const montoASaldar = aSaldar.reduce((a, r) => a + (Number(r.cost_total) || 0), 0)
                     return (
                     <div className="bg-[#faf8f5] px-4 py-2">
@@ -526,7 +533,11 @@ export default function CuentasPage() {
                               <Pencil className="size-3.5" />
                             </button>
                           )}
-                          {!isPaying && editState?.id !== r.id && (
+                          {!isPaying && editState?.id !== r.id && (pagaEnFudo(r) ? (
+                            <span className="shrink-0 rounded-lg bg-[#eef4fc] px-2 py-1 text-[10.5px] font-semibold text-[#2f5d8a]" title="Se paga en Fudo: cuando se paga allá, acá se marca solo">
+                              Se paga en Fudo
+                            </span>
+                          ) : (
                             <button
                               onClick={() => setPayState({ id: r.id, method: null })}
                               className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95"
@@ -534,7 +545,7 @@ export default function CuentasPage() {
                               <Check className="size-3" />
                               Pagar
                             </button>
-                          )}
+                          ))}
                           {(isPaying || editState?.id === r.id) && (
                             <button
                               onClick={() => { setPayState(null); setEditState(null) }}

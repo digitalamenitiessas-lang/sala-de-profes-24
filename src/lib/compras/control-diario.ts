@@ -16,7 +16,7 @@ import { logAudit } from '@/lib/audit'
 //     comparan: "Empleados" tiene varios iguales por día y está bien)
 //   · gastos de Fudo cuyos productos suman más que el total (Oyambre #85:
 //     productos cargados dos veces, que además suman stock de más)
-//   · Facturas A que llegaron hace más de un día y no están en Fudo
+//   · compras que llegaron hace más de un día y no están en Fudo
 //   · "a pagar" de la app distinto de la deuda de Fudo, gasto por gasto
 // Duplicados y "no cierran" se avisan una sola vez cada uno; lo pendiente y
 // la deuda, todos los días hasta que se arregle. Si todo cierra, no avisa
@@ -145,7 +145,7 @@ export async function controlDiarioCompras(admin: SupabaseClient, opciones: { ah
   const lineas = [
     dupNuevos.length ? `Posible compra cargada dos veces: ${dupNuevos.join('; ')}` : null,
     noCierranNuevos.length ? `Productos que no suman el total (¿cargados dos veces?): ${noCierranNuevos.join('; ')}` : null,
-    facturasPendientes.length ? `Facturas A que faltan cargar en Fudo: ${facturasPendientes.join('; ')}` : null,
+    facturasPendientes.length ? `Compras que llegaron y faltan cargar en Fudo: ${facturasPendientes.join('; ')}` : null,
     distintos.length ? `"A pagar" distinto de Fudo (app ${$(deuda.app)}, Fudo ${$(deuda.fudo)}): ${distintos.slice(0, 4).join('; ')}${distintos.length > 4 ? '…' : ''}` : null,
     sinGastoEnFudo ? `${sinGastoEnFudo} compra${sinGastoEnFudo === 1 ? '' : 's'} a pagar en la app que no ${sinGastoEnFudo === 1 ? 'está' : 'están'} en Fudo` : null,
   ].filter((x): x is string => Boolean(x))

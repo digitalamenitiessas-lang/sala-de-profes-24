@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { esFacturaEnFudo } from '@/lib/compras/datos-gasto'
+import { COMPROBANTES, esFacturaEnFudo } from '@/lib/compras/datos-gasto'
 import { fraccionADecimal } from '@/lib/compras/lista-pegada'
 import { syncToFudo } from '@/lib/fudo/stock-sync'
 import { normalizeToStockUnit, parseTypedUnit } from '@/lib/produccion/units'
@@ -23,6 +23,9 @@ export const MODO_FACTURA_PENDIENTE = 'factura_pendiente'
 
 export { esFacturaEnFudo }
 
+const etiquetaComprobante = (c: string | null | undefined) =>
+  COMPROBANTES.find((x) => x.key === c && c !== 'sin_comprobante')?.label ?? 'Compra'
+
 type Tabla = 'kitchen_orders' | 'bar_orders'
 const tablaDe = (source: 'cocina' | 'barra'): Tabla => (source === 'barra' ? 'bar_orders' : 'kitchen_orders')
 
@@ -30,6 +33,8 @@ const tablaDe = (source: 'cocina' | 'barra'): Tabla => (source === 'barra' ? 'ba
 export async function marcarFacturaPendiente(admin: SupabaseClient, userId: string, p: {
   orderId: number; source: 'cocina' | 'barra'; receivedQty?: string | null; stockItemId?: string | null
   numero?: string | null; nota?: string | null
+  /** Comprobante elegido (para la nota: "Ticket N° …", "Factura A N° …") */
+  comprobante?: string | null
 }): Promise<{ ok: boolean; error?: string }> {
   const tabla = tablaDe(p.source)
   const { data } = await admin.from(tabla).select('id, status, quantity, stock_item_id').eq('id', p.orderId).maybeSingle()
@@ -49,7 +54,7 @@ export async function marcarFacturaPendiente(admin: SupabaseClient, userId: stri
     received_by: userId,
     // Con el insumo el importador reconoce el renglón de la factura en Fudo
     ...(!order.stock_item_id && p.stockItemId ? { stock_item_id: p.stockItemId } : {}),
-    received_note: `Factura A${numero ? ` N° ${numero}` : ''}: falta cargarla en Fudo (el stock entra con la factura)${nota ? ` — ${nota}` : ''}`,
+    received_note: `${etiquetaComprobante(p.comprobante)}${numero ? ` N° ${numero}` : ''}: falta cargarla en Fudo (el stock entra con la compra)${nota ? ` — ${nota}` : ''}`,
     updated_at: ahoraIso,
   }).eq('id', order.id)
   if (error) return { ok: false, error: error.message }

@@ -52,11 +52,17 @@ export type CategoriaGasto = { id: string; name: string; grupo: string | null }
 export const esFactura = (c: ComprobanteTipo | null | undefined) => c === 'factura_a' || c === 'factura_b' || c === 'factura_c'
 
 /**
- * Factura A: la carga administración en Fudo, con IVA e IIBB como impuestos
- * (la API de Fudo no deja cargarlos). La app no crea el gasto: ver
- * lib/compras/factura-en-fudo.
+ * Todo comprobante se carga en Fudo y se refleja acá (9/11/2026, acordado
+ * con el encargado de la 24): en "Llegó" solo se marca que llegó, sin montos
+ * ni pago; el importador trae el gasto y lo vincula al pedido, y lo pagado en
+ * Fudo se marca pagado solo. false = como antes: solo la Factura A va a
+ * Fudo (con IVA e IIBB como impuestos, que la API de Fudo no deja cargar) y
+ * el resto lo carga la app.
  */
-export const esFacturaEnFudo = (gasto: Pick<DatosGasto, 'comprobante'> | null | undefined) => gasto?.comprobante === 'factura_a'
+export const TODO_EN_FUDO = true
+
+/** ¿Esta compra se carga en Fudo (y no la crea la app)? Ver lib/compras/factura-en-fudo. */
+export const esFacturaEnFudo = (gasto: Pick<DatosGasto, 'comprobante'> | null | undefined) => TODO_EN_FUDO || gasto?.comprobante === 'factura_a'
 
 const monto = (v: unknown) => {
   if (v == null || v === '') return null
