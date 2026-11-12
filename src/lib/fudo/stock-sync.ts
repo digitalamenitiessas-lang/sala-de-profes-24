@@ -71,6 +71,8 @@ type FudoWriteContext = {
   reason?: string | null
   note?: string | null
   idempotencyKey?: string | null
+  /** Ya se reintentó con el ingrediente nuevo (ver lib/fudo/vinculos-rotos) */
+  yaRevinculado?: boolean
 }
 
 export type StockWriteReason = 'physical_count' | 'manual_adjustment' | 'waste' | 'reception'
@@ -246,6 +248,18 @@ export async function readFudoProductStock(fudoProductId: string): Promise<numbe
   return asNullableNumber(data.data?.attributes?.stock)
 }
 
+/** Arregla el insumo cuyo ingrediente de Fudo dio 404; devuelve qué pasó, para mostrarlo */
+async function arreglarVinculo(admin: SupabaseClient, stockItemId: string, fudoIngredientId: string) {
+  try {
+    const { arreglarVinculoDeItem, textoArreglo } = await import('@/lib/fudo/vinculos-rotos')
+    const arreglo = await arreglarVinculoDeItem(admin, stockItemId, fudoIngredientId)
+    return arreglo ? { ...arreglo, texto: textoArreglo(arreglo) } : null
+  } catch (e) {
+    console.warn('[vinculos-rotos]', e instanceof Error ? e.message : e)
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // WRITE: Push a single stock change to Fudo
 // ---------------------------------------------------------------------------
@@ -315,6 +329,15 @@ export async function writeFudoStock(
           detail: error,
           payload: { operation: context.operation, new_qty: newQty },
         })
+        // Lo borraron en Fudo: se arregla el insumo (revincular o desactivar)
+        // y, si quedó unido al ingrediente nuevo, se escribe ahí
+        const arreglo = isMissingIngredient && context.stockItemId != null
+          ? await arreglarVinculo(context.admin, String(context.stockItemId), fudoIngredientId)
+          : null
+        if (arreglo?.accion === 'revinculado' && arreglo.fudoIdNuevo && !context.yaRevinculado) {
+          return writeFudoStock(arreglo.fudoIdNuevo, newQty, { ...context, fudoId: arreglo.fudoIdNuevo, yaRevinculado: true })
+        }
+        if (arreglo) return { success: false, error: arreglo.texto }
       }
       return { success: false, error }
     }
@@ -515,6 +538,15 @@ export async function writeFudoStockDelta(
     return { success: false, error: 'Item sin vínculo Fudo' }
   } catch (err) {
     const error = err instanceof Error ? err.message : 'Error desconocido'
+    // Ingrediente borrado en Fudo: se arregla el insumo y, si quedó unido al
+    // ingrediente nuevo, el movimiento se aplica ahí
+    if (link.fudoIngredientId && /^Fudo 404 /.test(error) && context.stockItemId != null) {
+      const arreglo = await arreglarVinculo(context.admin, String(context.stockItemId), link.fudoIngredientId)
+      if (arreglo?.accion === 'revinculado' && arreglo.fudoIdNuevo && !context.yaRevinculado) {
+        return writeFudoStockDelta({ fudoIngredientId: arreglo.fudoIdNuevo }, delta, { ...context, yaRevinculado: true })
+      }
+      if (arreglo) return { success: false, error: arreglo.texto }
+    }
     await recordFudoIncident(context.admin, {
       source: 'write_stock',
       code: 'fudo_read_before_write_failed',
@@ -928,6 +960,19 @@ export async function syncFromFudo(admin: SupabaseClient): Promise<SyncResult['r
       description: `Unidades alineadas con Fudo: ${unitChanges.slice(0, 10).join('; ')}${unitChanges.length > 10 ? ` (+${unitChanges.length - 10})` : ''}`,
       metadata: { changes: unitChanges },
     }).then(() => null, () => null)
+  }
+
+  // Insumos cuyo ingrediente ya no está en Fudo: si Fudo confirma que lo
+  // borraron, se revincula o se desactiva solo (ver lib/fudo/vinculos-rotos)
+  const sinIngrediente = stockItems.filter((si) => si.fudo_ingredient_id && !fudoIngMap.has(si.fudo_ingredient_id))
+  if (sinIngrediente.length > 0 && fudoItems.length > 0) {
+    const { arreglarVinculosRotos, textoArreglo } = await import('@/lib/fudo/vinculos-rotos')
+    const arreglos = await arreglarVinculosRotos(
+      admin,
+      sinIngrediente.map((si) => ({ id: String(si.id), name: si.name, fudo_ingredient_id: si.fudo_ingredient_id })),
+      fudoItems,
+    ).catch((e) => { console.warn('[vinculos-rotos]', e instanceof Error ? e.message : e); return [] })
+    for (const a of arreglos) discrepancies.push(textoArreglo(a))
   }
 
   // Solo los errores reales (transporte / escritura en BD) marcan el evento como
