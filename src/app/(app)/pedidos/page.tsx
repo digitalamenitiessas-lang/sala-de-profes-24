@@ -27,6 +27,7 @@ import { LlegoTodoDialog } from './_components/LlegoTodoDialog'
 import { DatosGastoFields, useDatosGasto } from './_components/DatosGastoFields'
 import { TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
 import { FacturasPendientes } from './_components/FacturasPendientes'
+import { EnviosSantaFe } from './_components/EnviosSantaFe'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { coincideBusqueda } from '@/lib/buscar'
 import { SinPrecioSection, faltaPrecio } from './_components/SinPrecio'
@@ -91,6 +92,12 @@ function PedidosContent() {
   const params = useSearchParams()
   const { profile } = useProfileContext()
   const canManage = isManagerOrAbove(profile?.role)
+  // Envíos de Santa Fe sin confirmar (suman en "En camino")
+  const [enviosEnCamino, setEnviosEnCamino] = useState(0)
+  useEffect(() => {
+    if (!canManage) return
+    void fetch('/api/envios', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) setEnviosEnCamino(d.enCamino?.length ?? 0) }).catch(() => {})
+  }, [canManage])
 
   const stepParam = params.get('step')
   const [step, setStepState] = useState<Step>(stepParam === 'camino' || stepParam === 'recibido' || stepParam === 'pagos' ? stepParam : 'pedir')
@@ -547,7 +554,7 @@ function PedidosContent() {
         <div className="grid grid-cols-4 gap-1.5 rounded-[1.4rem] bg-[#faf8f5] p-1 ring-1 ring-[#ebe6df]">
           {([
             { key: 'pedir' as const, label: 'Pedir', count: (sugerencias?.total_items ?? 0) + pending.length, Icon: ShoppingCart, tone: '#d4943a' },
-            { key: 'camino' as const, label: 'En camino', count: ordered.length, Icon: Truck, tone: '#4a90d9' },
+            { key: 'camino' as const, label: 'En camino', count: ordered.length + enviosEnCamino, Icon: Truck, tone: '#4a90d9' },
             { key: 'recibido' as const, label: 'Recibidos', count: receivedShown.length, Icon: Check, tone: '#006d5a' },
             { key: 'pagos' as const, label: 'Pagos', count: receiptsCount + sinPrecioCount, Icon: Wallet, tone: '#8b5e34' },
           ]).map(({ key, label, count, Icon, tone }) => {
@@ -842,12 +849,13 @@ function PedidosContent() {
       )}
 
       {/* ═══════════ PASO 2 — EN CAMINO ═══════════ */}
+      {step === 'camino' && canManage && <FadeIn><EnviosSantaFe modo="camino" onCount={setEnviosEnCamino} /></FadeIn>}
       {step === 'camino' && (
         ordered.length === 0 ? (
           <FadeIn>
             <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-10 text-center ring-1 ring-[#ebe6df]">
               <Truck className="size-8 text-[#ebe6df]" />
-              <p className="mt-3 text-sm font-medium text-[#7d6c64]">Nada en camino</p>
+              <p className="mt-3 text-sm font-medium text-[#7d6c64]">{enviosEnCamino > 0 ? 'Ningún pedido a proveedores en camino' : 'Nada en camino'}</p>
               <p className="mt-1 text-[11px] text-[#a39e97]">Los pedidos enviados al proveedor aparecen acá hasta que confirmás que llegaron.</p>
               {canManage && (
                 <button onClick={() => setLlegoTodo({ supplier: null, list: [] })} className="mt-4 flex items-center gap-1.5 rounded-xl bg-[#006d5a] px-3 py-2 text-[12px] font-semibold text-white active:scale-[0.98]">
@@ -949,6 +957,7 @@ function PedidosContent() {
               onDone={() => { void fetchOrders(); void fetchConciliar() }}
             />
           )}
+          {canManage && <EnviosSantaFe modo="recibido" />}
           {canManage && porPagar !== null && (porPagar > 0 || sinPrecioCount > 0) && (
             <button
               onClick={() => setStep('pagos')}
