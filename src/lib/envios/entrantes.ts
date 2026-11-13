@@ -81,24 +81,33 @@ export type Insumo24 = { id: string; name: string; unit: string; area: string | 
 const palabras = (s: string) => claveNombre(s).split(' ').filter(Boolean)
 // Mismas 5 primeras letras: "medallon"/"medallones", "hamburguesa"/"hamburgesas"
 const parecida = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && a.slice(0, 5) === b.slice(0, 5))
-function puntaje(a: string[], b: string[]): number {
-  if (!a.length || !b.length) return 0
+function coinciden(a: string[], b: string[]): number {
   const usadas = new Set<number>()
   let iguales = 0
   for (const p of a) {
     const j = b.findIndex((q, k) => !usadas.has(k) && parecida(p, q))
     if (j >= 0) { usadas.add(j); iguales++ }
   }
-  return iguales / Math.max(a.length, b.length)
+  return iguales
 }
 
-/** Insumo de la 24 con el mismo nombre; solo si hay uno claramente mejor */
+/**
+ * Insumo de la 24 con el mismo nombre; solo si hay uno claramente mejor.
+ * Vale si casi todas las palabras coinciden, o si están TODAS las del nombre
+ * más corto (al menos dos): Santa Fe suele agregar la marca ("Jamon Cocido
+ * Cagnoli" = "Jamon Cocido", "Queso Tybo Lactear" = "Queso Tybo"; 13/11).
+ */
 export function sugerirInsumo(nombre: string, insumos: Insumo24[]): string | null {
   const a = palabras(nombre)
-  const conPuntaje = insumos.map((i) => ({ id: i.id, p: puntaje(a, palabras(i.name)) })).sort((x, y) => y.p - x.p)
-  const [mejor, segundo] = conPuntaje
-  if (!mejor || mejor.p < 0.75) return null
-  if (segundo && segundo.p === mejor.p) return null
+  if (!a.length) return null
+  const candidatos = insumos.map((i) => {
+    const b = palabras(i.name), m = coinciden(a, b)
+    const largo = b.length ? m / Math.max(a.length, b.length) : 0
+    const todasLasDelCorto = b.length > 0 && m === Math.min(a.length, b.length) && (m >= 2 || (a.length === 1 && b.length === 1))
+    return { id: i.id, largo, vale: largo >= 0.75 || todasLasDelCorto }
+  }).filter((c) => c.vale).sort((x, y) => y.largo - x.largo)
+  const [mejor, segundo] = candidatos
+  if (!mejor || (segundo && segundo.largo === mejor.largo)) return null
   return mejor.id
 }
 
@@ -234,6 +243,19 @@ export async function enviosParaLa24(admin: SupabaseClient) {
   ])
   const envios = [...((enCamino ?? []) as FilaEnvio[]), ...((recibidos ?? []) as FilaEnvio[])]
   const { data: items } = envios.length ? await admin.from('envios_entrantes_items').select('*').in('envio_id', envios.map((e) => e.id)).order('created_at') : { data: [] }
+  // Un vínculo agregado después de que llegó el envío (o un insumo nuevo) se
+  // aplica igual a lo que está en camino: no hace falta elegirlo a mano
+  const sinElegir = ((items ?? []) as FilaItem[]).filter((i) => !i.stock_item_id && (enCamino ?? []).some((e: FilaEnvio) => e.id === i.envio_id))
+  if (sinElegir.length) {
+    const { data: vinc } = await admin.from('envios_vinculos').select('item_origen_id, stock_item_id').eq('origen', ORIGEN).in('item_origen_id', sinElegir.map((i) => i.item_origen_id))
+    const vinculo = new Map(((vinc ?? []) as { item_origen_id: string; stock_item_id: string }[]).map((v) => [v.item_origen_id, v.stock_item_id]))
+    const activos = new Set(insumos.map((s) => s.id))
+    for (const i of sinElegir) {
+      const v = vinculo.get(i.item_origen_id)
+      const elegido = v && activos.has(v) ? v : sugerirInsumo(i.nombre, insumos)
+      if (elegido) { i.stock_item_id = elegido; await admin.from('envios_entrantes_items').update({ stock_item_id: elegido }).eq('id', i.id).is('stock_item_id', null) }
+    }
+  }
   const porEnvio = new Map<string, FilaItem[]>()
   for (const i of (items ?? []) as FilaItem[]) porEnvio.set(i.envio_id, [...(porEnvio.get(i.envio_id) ?? []), i])
   const quien = new Map<string, string | null>()

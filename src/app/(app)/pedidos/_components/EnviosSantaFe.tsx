@@ -50,7 +50,8 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
     setLineas((prev) => {
       const next = { ...prev }
       for (const e of d.enCamino) for (const i of e.items) {
-        if (next[i.id]) continue
+        // Lo que ya eligió la persona no se toca; lo que estaba sin elegir se completa
+        if (next[i.id]?.stock_item_id) continue
         const insumo = d.insumos.find((s) => s.id === i.stock_item_id)
         const def = enUnidad24(i, insumo)
         next[i.id] = { stock_item_id: i.stock_item_id ?? '', cantidad: def != null ? String(def) : '', tocada: false }
@@ -60,6 +61,13 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
   }, [])
 
   useEffect(() => { void cargar() }, [cargar])
+  // Al volver a la pestaña se actualiza: un producto creado o vinculado mientras
+  // tanto aparece sin recargar (13/11: la "ternera" se creó con la pantalla abierta)
+  useEffect(() => {
+    const alVolver = () => { if (document.visibilityState === 'visible') void cargar() }
+    document.addEventListener('visibilitychange', alVolver)
+    return () => document.removeEventListener('visibilitychange', alVolver)
+  }, [cargar])
 
   if (!datos) return null
   const insumo = (id: string) => datos.insumos.find((s) => s.id === id)
