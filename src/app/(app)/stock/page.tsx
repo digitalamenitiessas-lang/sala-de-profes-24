@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Search, X, RefreshCw, Loader2, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle,
-  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package, Plus,
+  ClipboardList, TrendingUp, History, Activity, ChefHat, ShieldCheck, Package, Plus, Truck,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -265,6 +265,18 @@ function StockPageContent() {
           </div>
         </div>
       </FadeIn>
+
+      {/* Conteo de cierre: lo que manda Santa Fe (Santa Fe lo lee para armar el envío) */}
+      {canOperate && (
+        <Link href="/stock/cierre" className="flex items-center gap-3 rounded-2xl bg-white px-3.5 py-3 ring-1 ring-[#ebe6df] active:scale-[0.99]">
+          <Truck className="size-5 shrink-0 text-[#006d5a]" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-semibold text-[#3d2c24]">Conteo de cierre</span>
+            <span className="block text-[11px] text-[#7d6c64]">Lo que manda Santa Fe: contalo al cerrar</span>
+          </span>
+          <ChevronRight className="size-4 shrink-0 text-[#a39e97]" />
+        </Link>
+      )}
 
       {/* Áreas */}
       <FadeIn delay={0.04}>

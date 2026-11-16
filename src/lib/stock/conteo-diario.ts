@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { idsDelCierre } from '@/lib/envios/catalogo'
 
 // ---------------------------------------------------------------------------
 // Conteo diario de elaborados — se hace en la app, y la app avisa
@@ -8,6 +9,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 // notificación con el resumen (lo que antes era el mensaje del grupo).
 // El conteo del día queda guardado en audit_trail (action 'conteo_diario')
 // para mostrarlo en la app: qué se contó, quién y a qué hora.
+//
+// En la 24 no se produce: lo que se cuenta al cierre son los productos que
+// manda Santa Fe (la lista que manda Santa Fe, lib/envios/catalogo), en
+// Stock → Conteo de cierre. Santa Fe lee ese stock para armar el envío.
 // ---------------------------------------------------------------------------
 
 const PRE_PRODUCTO = /\bpre\s*-?\s*producto\b/i
@@ -17,14 +22,22 @@ function inicioDelDiaAR(): string {
   return new Date(`${hoyAR}T00:00:00-03:00`).toISOString()
 }
 
-/** Elaborados contados hoy (hora Argentina) sobre los que se llevan. */
-export async function estadoConteoHoy(admin: SupabaseClient): Promise<{ contados: number; total: number; ultimo: string | null }> {
+/** Dónde se hace el conteo del día: en la 24, el de cierre de lo que manda Santa Fe. */
+export type DestinoConteo = { titulo: string; que: string; url: string }
+const CIERRE: DestinoConteo = { titulo: 'Conteo de cierre', que: 'productos de Santa Fe', url: '/stock/cierre' }
+const ELABORADOS: DestinoConteo = { titulo: 'Conteo de elaborados', que: 'elaborados', url: '/cocina/elaborados?tab=contar' }
+
+/** Productos contados hoy (hora Argentina) sobre los que se cuentan. */
+export async function estadoConteoHoy(admin: SupabaseClient): Promise<{ contados: number; total: number; ultimo: string | null; destino: DestinoConteo }> {
   const desde = inicioDelDiaAR()
-  const { data } = await admin.from('stock_items').select('name, last_counted_at').eq('is_active', true).eq('is_produced', true)
-  const lista = ((data ?? []) as { name: string; last_counted_at: string | null }[]).filter((i) => !PRE_PRODUCTO.test(i.name))
+  const cierre = await idsDelCierre(admin)
+  const { data } = cierre.length
+    ? await admin.from('stock_items').select('name, last_counted_at').eq('is_active', true).in('id', cierre)
+    : await admin.from('stock_items').select('name, last_counted_at').eq('is_active', true).eq('is_produced', true)
+  const lista = ((data ?? []) as { name: string; last_counted_at: string | null }[]).filter((i) => cierre.length > 0 || !PRE_PRODUCTO.test(i.name))
   const hoy = lista.filter((i) => i.last_counted_at && i.last_counted_at >= desde)
   const ultimo = hoy.map((i) => i.last_counted_at!).sort().at(-1) ?? null
-  return { contados: hoy.length, total: lista.length, ultimo }
+  return { contados: hoy.length, total: lista.length, ultimo, destino: cierre.length ? CIERRE : ELABORADOS }
 }
 
 export type LineaConteoDia = { stock_item_id: string; name: string; unit: string; qty: number; antes: number }

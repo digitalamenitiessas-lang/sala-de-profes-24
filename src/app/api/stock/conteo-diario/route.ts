@@ -64,19 +64,20 @@ export async function POST(request: Request) {
       if (r.success) lineas.push({ stock_item_id: it.id, name: it.name, unit: it.unit, qty, antes: Number(it.current_qty) })
     }
 
+    const estado = await estadoConteoHoy(admin)
     if (lineas.length > 0) {
       const { data: perfil } = await admin.from('profiles').select('first_name, last_name').eq('id', auth.user.id).maybeSingle()
       const quien = [perfil?.first_name, perfil?.last_name].filter(Boolean).join(' ') || null
       await admin.from('audit_trail').insert({
         user_id: auth.user.id, user_name: quien, action: 'conteo_diario', module: 'stock', entity_type: 'stock_count',
-        description: `${quien ?? 'Alguien'} contó ${lineas.length} elaborado${lineas.length === 1 ? '' : 's'}`,
+        description: `${quien ?? 'Alguien'} contó ${lineas.length} ${lineas.length === 1 ? 'producto' : 'productos'} (${estado.destino.titulo.toLowerCase()})`,
         metadata: { comentario, lineas },
       })
       // Lo que antes era el mensaje al grupo de WhatsApp
       await notifyEvent(admin, 'conteo_diario_hecho', {
-        title: `📋 Conteo de elaborados${quien ? ` — ${quien.split(' ')[0]}` : ''}`,
+        title: `📋 ${estado.destino.titulo}${quien ? ` — ${quien.split(' ')[0]}` : ''}`,
         body: resumenParaNotificacion(lineas, comentario),
-        url: '/cocina/elaborados?tab=contar',
+        url: estado.destino.url,
       }, { excludeUserId: auth.user.id }).catch((err) => console.warn('[conteo-diario] push', err))
     }
 
@@ -84,7 +85,7 @@ export async function POST(request: Request) {
       success: lineas.length > 0,
       guardados: lineas.length,
       resultados,
-      estado: await estadoConteoHoy(admin),
+      estado,
     })
   } catch (err) {
     console.error('[POST /api/stock/conteo-diario]', err)

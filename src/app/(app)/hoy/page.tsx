@@ -49,7 +49,7 @@ type HoyData = {
   producedItems: { id: string; name: string; unit: string; current_qty: number }[]
   countNegative: { id: string; name: string; current_qty: number; unit: string }[]
   countCritical: number
-  conteoHoy: { contados: number; total: number; ultimo: string | null } | null
+  conteoHoy: { contados: number; total: number; ultimo: string | null; destino?: { titulo: string; que: string; url: string } } | null
 }
 
 type ShiftInfo = {
@@ -350,6 +350,10 @@ export default function HoyPage() {
 
   if (!data) return <LoadingState />
 
+  // Falta el conteo del día (en la 24: el de cierre de lo que manda Santa Fe).
+  // Sin nada para contar (total 0) no hay nada que pedir.
+  const faltaConteo = Boolean(data.conteoHoy && data.conteoHoy.total > 0 && data.conteoHoy.contados === 0)
+
   const steps = [
     {
       key: 'pedir',
@@ -527,16 +531,16 @@ export default function HoyPage() {
       key: 'contar',
       title: 'Contar',
       icon: ClipboardList,
-      href: data.conteoHoy && data.conteoHoy.contados === 0 ? '/cocina/elaborados?tab=contar' : '/stock?from=hoy',
-      cta: data.conteoHoy && data.conteoHoy.contados === 0 ? 'Contar elaborados' : 'Ir a Conteo',
-      tone: data.countNegative.length > 0 || (data.conteoHoy?.contados === 0) ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
+      href: faltaConteo ? (data.conteoHoy?.destino?.url ?? '/cocina/elaborados?tab=contar') : '/stock?from=hoy',
+      cta: faltaConteo ? (data.conteoHoy?.destino?.url === '/stock/cierre' ? 'Contar cierre' : 'Contar elaborados') : 'Ir a Conteo',
+      tone: data.countNegative.length > 0 || faltaConteo ? 'urgent' : data.countCritical > 0 ? 'action' : 'ok',
       body: (
         <div className="space-y-1">
-          {data.conteoHoy && (
+          {data.conteoHoy && data.conteoHoy.total > 0 && (
             <p className="text-xs text-[#3d2c24]">
               {data.conteoHoy.contados > 0
-                ? <>✅ <span className="font-bold">Conteo de hoy hecho</span>: {data.conteoHoy.contados} elaborados contados</>
-                : <>⏳ <span className="font-bold text-[#d4943a]">Falta el conteo de elaborados de hoy</span> — al cargarlo le llega el resumen a todos</>}
+                ? <>✅ <span className="font-bold">{data.conteoHoy.destino?.titulo ?? 'Conteo'} de hoy hecho</span>: {data.conteoHoy.contados} {data.conteoHoy.destino?.que ?? 'elaborados'} contados</>
+                : <>⏳ <span className="font-bold text-[#d4943a]">Falta el {(data.conteoHoy.destino?.titulo ?? 'conteo de elaborados').toLowerCase()} de hoy</span> — {data.conteoHoy.destino?.url === '/stock/cierre' ? 'con eso Santa Fe sabe qué mandar' : 'al cargarlo le llega el resumen a todos'}</>}
             </p>
           )}
           {data.countNegative.length > 0 && (
