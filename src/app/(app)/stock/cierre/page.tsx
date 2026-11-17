@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { ArrowLeft, Check, Link2, Loader2, Minus, Plus, Scale, Truck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { ConteoDelDia } from '@/lib/stock/conteo-diario'
+import { OpcionesFudo, useFudoPendientes } from '../../pedidos/_components/FudoPendientes'
 
 // ---------------------------------------------------------------------------
 // Stock → Conteo de cierre (la 24)
@@ -234,6 +235,26 @@ export default function ConteoCierrePage() {
 function SinVincular({ items, insumos, puede, onListo }: { items: Payload['sin_vincular']; insumos: Payload['insumos']; puede: boolean; onListo: () => void }) {
   const [elegido, setElegido] = useState<Record<string, string>>({})
   const [guardando, setGuardando] = useState<string | null>(null)
+  // Lo que crearon hoy en Fudo y la app trae recién a la noche: se ofrece al
+  // final de la lista y se crea al elegirlo (ver FudoPendientes)
+  const fudo = useFudoPendientes(puede && items.length > 0)
+  const [traidos, setTraidos] = useState<Payload['insumos']>([])
+  const opciones = [...insumos, ...traidos.filter((t) => !insumos.some((s) => s.id === t.id))]
+
+  async function elegir(itemId: string, valor: string) {
+    if (!fudo.esDeFudo(valor)) { setElegido((x) => ({ ...x, [itemId]: valor })); return }
+    setGuardando(itemId)
+    try {
+      const nuevo = await fudo.traer(valor)
+      if (!nuevo) return
+      setTraidos((t) => [...t, { id: nuevo.id, name: nuevo.name, unit: nuevo.unit, enFudo: true }])
+      setElegido((x) => ({ ...x, [itemId]: nuevo.id }))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo traer de Fudo')
+    } finally {
+      setGuardando(null)
+    }
+  }
 
   async function vincular(itemId: string) {
     const stockItemId = elegido[itemId]
@@ -257,7 +278,7 @@ function SinVincular({ items, insumos, puede, onListo }: { items: Payload['sin_v
       <p className="flex items-center gap-1.5 text-[13px] font-semibold text-[#3d2c24]"><Link2 className="size-4 text-[#d4943a]" /> Falta saber cuál es en la 24</p>
       <p className="mt-0.5 text-[11.5px] text-[#7d6c64]">
         {puede
-          ? 'Santa Fe manda estos productos. Elegí cuál es en la 24 (se hace una sola vez). Si no está en la lista, créenlo en el Fudo de la 24 como ingrediente con "Controlar stock".'
+          ? 'Santa Fe manda estos productos. Elegí cuál es en la 24 (se hace una sola vez). Si no está en la lista, créenlo en el Fudo de la 24 como ingrediente con "Controlar stock": aparece al final, en «Están en Fudo».'
           : 'Santa Fe manda estos productos pero falta elegir cuál es en la 24. Avisale a un encargado.'}
       </p>
       <ul className="mt-2 space-y-2">
@@ -268,11 +289,13 @@ function SinVincular({ items, insumos, puede, onListo }: { items: Payload['sin_v
               <div className="mt-1.5 flex gap-2">
                 <select
                   value={elegido[i.item_id] ?? ''}
-                  onChange={(e) => setElegido((x) => ({ ...x, [i.item_id]: e.target.value }))}
+                  onChange={(e) => void elegir(i.item_id, e.target.value)}
+                  disabled={guardando === i.item_id}
                   className="h-10 min-w-0 flex-1 rounded-lg border border-[#ebe6df] bg-white px-2 text-[13px] outline-none focus:border-[#006d5a]"
                 >
                   <option value="">Elegí el producto de la 24…</option>
-                  {insumos.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.unit}){s.enFudo ? '' : ' · sin Fudo'}</option>)}
+                  {opciones.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.unit}){s.enFudo ? '' : ' · sin Fudo'}</option>)}
+                  <OpcionesFudo lista={fudo.lista} />
                 </select>
                 <button
                   type="button"

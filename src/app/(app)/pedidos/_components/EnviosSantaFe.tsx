@@ -7,6 +7,7 @@ import { AlertTriangle, Check, Loader2, Truck } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { convertQty } from '@/lib/produccion/units'
+import { OpcionesFudo, useFudoPendientes } from './FudoPendientes'
 
 // ---------------------------------------------------------------------------
 // Envíos de producción de Santa Fe (la 24 no produce). "En camino": lo que
@@ -36,6 +37,7 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
   const [lineas, setLineas] = useState<Record<string, Linea>>({})
   const [notas, setNotas] = useState<Record<string, string>>({})
   const [enviando, setEnviando] = useState<string | null>(null)
+  const [trayendo, setTrayendo] = useState<string | null>(null)
   // En un ref: si el padre pasa una función nueva en cada render, no se recarga en bucle
   const avisarCantidad = useRef(onCount)
   useEffect(() => { avisarCantidad.current = onCount }, [onCount])
@@ -69,8 +71,32 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
     return () => document.removeEventListener('visibilitychange', alVolver)
   }, [cargar])
 
+  // Algo sin elegir: puede ser un producto que crearon hoy en Fudo y la app
+  // todavía no trajo (lo trae a la noche). Se ofrece y se crea al elegirlo.
+  const sinElegir = Boolean(datos?.enCamino.some((e) => e.items.some((i) => !lineas[i.id]?.stock_item_id)))
+  const fudo = useFudoPendientes(modo === 'camino' && sinElegir)
+
   if (!datos) return null
   const insumo = (id: string) => datos.insumos.find((s) => s.id === id)
+
+  async function elegirDeFudo(item: Item, valor: string) {
+    setTrayendo(item.id)
+    try {
+      const nuevo = await fudo.traer(valor)
+      if (!nuevo) return
+      const s: Insumo = { id: nuevo.id, name: nuevo.name, unit: nuevo.unit, area: null, enFudo: true }
+      setDatos((d) => d && !d.insumos.some((x) => x.id === s.id) ? { ...d, insumos: [...d.insumos, s].sort((a, b) => a.name.localeCompare(b.name)) } : d)
+      const def = enUnidad24(item, s)
+      setLineas((prev) => {
+        const l = prev[item.id]
+        return { ...prev, [item.id]: { stock_item_id: s.id, cantidad: l?.tocada ? l.cantidad : def != null ? String(def) : '', tocada: l?.tocada ?? false } }
+      })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo traer de Fudo')
+    } finally {
+      setTrayendo(null)
+    }
+  }
 
   function elegir(item: Item, stockItemId: string) {
     setLineas((prev) => {
@@ -180,11 +206,13 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
                       <div className="mt-1.5 flex items-center gap-2">
                         <select
                           value={l?.stock_item_id ?? ''}
-                          onChange={(ev) => elegir(i, ev.target.value)}
+                          onChange={(ev) => fudo.esDeFudo(ev.target.value) ? void elegirDeFudo(i, ev.target.value) : elegir(i, ev.target.value)}
+                          disabled={trayendo === i.id}
                           className={cn('min-w-0 flex-1 rounded-lg bg-white px-2 py-1.5 text-[12px] ring-1', s ? 'ring-[#ebe6df]' : 'ring-[#d4943a]')}
                         >
                           <option value="">Elegí el producto de la 24…</option>
                           {datos.insumos.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.unit}){x.enFudo ? '' : ' · sin Fudo'}</option>)}
+                          <OpcionesFudo lista={fudo.lista} />
                         </select>
                         <input
                           inputMode="decimal"
@@ -195,7 +223,8 @@ export function EnviosSantaFe({ modo, onCount }: { modo: 'camino' | 'recibido'; 
                         />
                         <span className="w-10 shrink-0 text-[11px] text-[#7d6c64]">{s?.unit ?? ''}</span>
                       </div>
-                      {!l?.stock_item_id && <p className="mt-1 text-[10.5px] text-[#b45309]">La primera vez elegí a qué producto de la 24 corresponde; después queda guardado.</p>}
+                      {trayendo === i.id && <p className="mt-1 flex items-center gap-1 text-[10.5px] text-[#7d6c64]"><Loader2 className="size-3 animate-spin" /> Trayendo de Fudo…</p>}
+                      {!l?.stock_item_id && trayendo !== i.id && <p className="mt-1 text-[10.5px] text-[#b45309]">La primera vez elegí a qué producto de la 24 corresponde; después queda guardado. Si lo crearon hoy en Fudo, está al final de la lista, en «Están en Fudo».</p>}
                       {s && !s.enFudo && <p className="mt-1 text-[10.5px] text-[#b45309]">Este producto no está en el Fudo de la 24: créenlo ahí (con Controlar stock) y toquen Crear todos en LVE.</p>}
                       {s && mandado == null && <p className="mt-1 text-[10.5px] text-[#b45309]">Santa Fe lo manda en {i.unidad} y acá se cuenta en {s.unit}: cargá cuánto llegó en {s.unit}.</p>}
                       {falta && <p className="mt-1 flex items-center gap-1 text-[10.5px] font-semibold text-[#b45309]"><AlertTriangle className="size-3" /> Faltan {num(mandado! - c)} {s?.unit}</p>}
