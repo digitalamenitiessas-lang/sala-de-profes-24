@@ -60,8 +60,12 @@ export function ProtocoloAlarma() {
       : { t: `Es la hora: ${p.nombre}`, s: `${p.hora} · asigná a alguien del turno`, cta: 'Asignar' }
   const urgente = p.tipo === 'atrasada'
 
+  // En el celular va ARRIBA del botón del asistente (abajo a la izquierda) y
+  // de la barra de navegación, contando la franja inferior del iPhone
+  // (safe-area): antes la barra le tapaba el renglón de abajo y el botón el
+  // costado izquierdo. En pantallas anchas va centrado y no choca con el botón.
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-[84px] z-30 flex justify-center px-3">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(8.75rem+env(safe-area-inset-bottom))] z-30 flex justify-center px-3 sm:bottom-[calc(5.25rem+env(safe-area-inset-bottom))]">
       <div className={cn('pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl p-3 text-white shadow-xl', urgente ? 'bg-[#ea504c]' : 'bg-[#3d2c24]')}>
         <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-full bg-white/15', urgente && 'animate-pulse')}>
           {urgente ? <AlertTriangle className="size-4.5" /> : <Sparkles className="size-4.5 text-[#f0c98a]" />}

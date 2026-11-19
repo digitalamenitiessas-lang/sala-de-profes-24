@@ -476,7 +476,7 @@ export function FloatingChat() {
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 400, damping: 25 }}
             onClick={() => setOpen(true)}
-            className="fixed bottom-20 left-4 z-50 flex size-12 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-transform hover:scale-105 active:scale-95 sm:bottom-28 sm:left-6"
+            className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] left-4 z-50 flex size-12 items-center justify-center rounded-full bg-[#006d5a] text-white shadow-lg shadow-[#006d5a]/25 transition-transform hover:scale-105 active:scale-95 sm:bottom-28 sm:left-6"
             aria-label="Abrir asistente"
           >
             <Coffee className="size-5" />
