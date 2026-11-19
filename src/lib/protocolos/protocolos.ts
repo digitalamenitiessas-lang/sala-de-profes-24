@@ -165,15 +165,21 @@ export async function personalDeTurno(admin: SupabaseClient, fecha = fechaOperat
  * Quiénes pueden hacer la tarea de ese horario: los que tienen un turno que se
  * superpone con su plazo (hora → hora + 60'), o los que están fichados si la
  * tarea es de ahora. Nadie fuera de turno.
+ * Si ya está atrasada, también quien trabaja AHORA: el conteo de elaborados
+ * de las 06:49 quedaba asignado a la chef de la mañana y, cuando se iba, no se
+ * le podía pasar a la del turno tarde.
  */
 export function candidatosPara(personal: Persona[], t: Pick<Tarea, 'fecha' | 'hora'>, ahora = new Date(), roles?: string[] | null): Candidato[] {
   const inicio = instanteDe(t.fecha, t.hora).getTime()
   const limite = inicio + ATRASO_MIN * 60_000
-  const esDeAhora = ahora.getTime() >= inicio - ATRASO_MIN * 60_000 && ahora.getTime() < limite
+  const ya = ahora.getTime()
+  const esDeAhora = ya >= inicio - ATRASO_MIN * 60_000 && ya < limite
+  const atrasada = ya >= limite
   const out: Candidato[] = []
   for (const p of personal) {
     const turno = p.turnos.find((x) => x.inicio < limite && x.fin > inicio)
-    if (!turno && !(p.presente && esDeAhora)) continue
+      ?? (atrasada ? p.turnos.find((x) => turnoEnCurso(x, ya)) : undefined)
+    if (!turno && !(p.presente && (esDeAhora || atrasada))) continue
     const rol = turno?.rol ?? p.role
     if (roles?.length && !roles.includes(rol)) continue
     out.push({ id: p.id, nombre: p.nombre, role: rol, presente: p.presente, turno: turno ? `${turno.desde}–${turno.hasta}` : null })
