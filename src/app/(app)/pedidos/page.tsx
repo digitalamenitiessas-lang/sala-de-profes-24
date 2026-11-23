@@ -30,7 +30,7 @@ import { FacturasPendientes } from './_components/FacturasPendientes'
 import { EnviosSantaFe } from './_components/EnviosSantaFe'
 import { sugerirInsumo } from '@/lib/compras/lista-pegada'
 import { coincideBusqueda } from '@/lib/buscar'
-import { SinPrecioSection, faltaPrecio } from './_components/SinPrecio'
+import { SinPrecioSection, faltaPrecio, incluidoEnGastoFudo } from './_components/SinPrecio'
 
 // ---------------------------------------------------------------------------
 // /pedidos — el ciclo real, en tres pasos y sin duplicar Fudo
@@ -166,16 +166,18 @@ function PedidosContent() {
 
     supabase
       .from('stock_receipts')
-      .select('cost_total')
+      .select('cost_total, fudo_expense_id')
       .eq('payment_status', 'a_pagar')
       .then(({ data, error }) => {
         if (error) { setPorPagar(null); return }
-        const all = (data ?? []) as { cost_total: number | null }[]
-        // Los sin precio no suman al saldo en $, pero se cuentan aparte
+        // (fudo_expense_id no está en los tipos generados)
+        const all = (data ?? []) as unknown as { cost_total: number | null; fudo_expense_id: string | null }[]
+        // Los sin precio no suman al saldo en $, pero se cuentan aparte (no los
+        // que ya están en el total de un gasto de Fudo)
         const rows = all.filter((r) => !faltaPrecio(r.cost_total))
         setPorPagar(Math.round(rows.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0)))
         setReceiptsCount(rows.length)
-        setSinPrecioCount(all.length - rows.length)
+        setSinPrecioCount(all.filter((r) => faltaPrecio(r.cost_total) && !incluidoEnGastoFudo(r)).length)
       })
   }, [])
 
@@ -240,6 +242,9 @@ function PedidosContent() {
         supplier_name: r.suppliers?.name ?? 'Sin proveedor',
         fudo_expense_id: (r.fudo_expense_id ?? null) as string | null,
       }))
+      // Sin precio pero ya en el total de su gasto de Fudo (gasto del propio
+      // recibo, antes de completar con el del pedido): no van a "Falta el precio"
+      const incluidos = new Set(rows.filter((r) => incluidoEnGastoFudo(r)).map((r) => r.id))
       // Segunda query: obtener fudo_expense_id de kitchen_orders para los order_id presentes
       const orderIds = rows.map((r) => r.order_id).filter((id): id is number => id !== null)
       if (orderIds.length > 0) {
@@ -255,7 +260,7 @@ function PedidosContent() {
         }
       }
       setReceipts(rows.filter((r) => !faltaPrecio(r.cost_total)))
-      const sinPrecio = rows.filter((r) => faltaPrecio(r.cost_total))
+      const sinPrecio = rows.filter((r) => faltaPrecio(r.cost_total) && !incluidos.has(r.id))
       setReceiptsSinPrecio(sinPrecio)
       setSinPrecioCount(sinPrecio.length)
     }

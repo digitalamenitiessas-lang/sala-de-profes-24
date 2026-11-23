@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
   //    acá tiene que verse pagado enseguida.
   await paso('pagos_fudo', async () => {
     const r = await sincronizarPagosDesdeFudo(admin)
-    return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, ajustados: r.ajustados, errores: r.errores }
+    return { revisados: r.revisados, pagados: r.pagados, cancelados: r.cancelados.length, quitados: r.quitados.length, con_proveedor: r.conProveedor, ajustados: r.ajustados, errores: r.errores }
   })
 
   // 8. Control de compras contra Fudo: desde las 20, una vez por día (después

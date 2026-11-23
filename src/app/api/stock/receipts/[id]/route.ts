@@ -186,6 +186,13 @@ export async function PATCH(
     const newPaymentStatus = body.payment_status === 'a_pagar' ? 'a_pagar' : undefined
     const newSupplierId = typeof body.supplier_id === 'string' ? body.supplier_id : undefined
 
+    // Producto sin monto de una compra cargada en Fudo: su plata ya está en el
+    // total de ese gasto (lo importado o la diferencia con Fudo). Ponerle
+    // precio lo contaría dos veces en la deuda (Joaquín 23/11, #355 y #370).
+    if (newCostTotal !== undefined && newCostTotal > 0 && receipt.fudo_expense_id && !(Number(receipt.cost_total) > 0) && cargadoEnFudo(receipt.note)) {
+      return NextResponse.json({ error: `Este producto ya está incluido en el total del gasto #${receipt.fudo_expense_id} de Fudo: no hace falta ponerle precio (se contaría dos veces). Si el total está mal, corregilo en Fudo.` }, { status: 409 })
+    }
+
     // Si cambia la cantidad y hay insumo vinculado → aplicar delta al stock
     let fudoSynced = false
     if (newQty !== null && newQty !== receipt.qty && receipt.stock_item_id) {

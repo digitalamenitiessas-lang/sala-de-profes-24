@@ -11,18 +11,39 @@ import { NOTA_DIFERENCIA_FUDO } from '@/lib/compras/datos-gasto'
 // de Fudo. Sala de Profes no se enteraba: seguían "a pagar" en Cuentas por
 // pagar. Esto revisa en Fudo los gastos de los recibos "a pagar":
 //   · pagado en Fudo   → el recibo pasa a pagado (fecha y medio de Fudo)
-//   · cancelado en Fudo → NO se toca: se devuelve para avisar (anular un
-//     recibo mueve stock, eso lo decide una persona)
+//   · anulado en Fudo  → si sus recibos son solo lo que trajo el importador
+//     (sin pedido de la app ni nada pagado), salen de la deuda solos: el
+//     importador nunca le sumó stock a la app (el stock lo copia de Fudo, que
+//     lo devuelve al anular) y Fudo ya está anulado. Si no, NO se toca y se
+//     devuelve para avisar: anular lo que cargó la app mueve stock y lo decide
+//     una persona. (Joaquín 23/11: #308 Casa de Bernarda y #386 Todo Envase
+//     seguían sumando al saldo.)
+//   · proveedor: si en Fudo cambian el proveedor del gasto después de
+//     importarlo, se copia (#338 y #339 quedaron "Sin proveedor": se
+//     importaron con "AC" y después los pasaron a Jose Javier Arroyo AC)
 //   · sin pagar y con más monto en Fudo que en la app (ej. le agregaron el IVA
 //     en Fudo) → la diferencia queda "a pagar" en un recibo NOTA_DIFERENCIA_FUDO
 // Corre con el pulso de Fudo (una vez por hora) y al abrir Cuentas por pagar.
 // ---------------------------------------------------------------------------
 
-type Recibo = { id: number; fudo_expense_id: string; cost_total: number | null; supplier_id: string | null; suppliers: { name: string } | null }
+type Recibo = { id: number; fudo_expense_id: string; cost_total: number | null; supplier_id: string | null; note: string | null; order_id: number | null; suppliers: { name: string } | null }
 type Res = { type: string; id: string; attributes?: Record<string, unknown>; relationships?: Record<string, { data: { id: string; type: string } | { id: string; type: string }[] | null }> }
 
 export type CanceladoEnFudo = { expenseId: string; receiptIds: number[]; proveedor: string | null; total: number }
-export type ResultadoPagosFudo = { revisados: number; pagados: number; recibosPagados: number; cancelados: CanceladoEnFudo[]; ajustados: number; errores: number }
+export type ResultadoPagosFudo = {
+  revisados: number; pagados: number; recibosPagados: number
+  /** Anulados en Fudo que quedan para que los resuelva una persona */
+  cancelados: CanceladoEnFudo[]
+  /** Anulados en Fudo que salieron de la deuda solos */
+  quitados: CanceladoEnFudo[]
+  /** Gastos a los que se les copió el proveedor de Fudo */
+  conProveedor: number
+  ajustados: number; errores: number
+}
+
+/** Recibo que creó el importador (o su diferencia con Fudo): no viene de "Llegó" ni de un pedido vinculado */
+const soloDelImportador = (r: { note: string | null; order_id: number | null }) =>
+  !r.order_id && (/^Importado desde Fudo/.test(r.note ?? '') || (r.note ?? '').startsWith(NOTA_DIFERENCIA_FUDO))
 
 const MAX_GASTOS = 150
 
@@ -30,7 +51,7 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
   // fudo_expense_id no está en los tipos generados
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (admin.from('stock_receipts') as any)
-    .select('id, fudo_expense_id, cost_total, supplier_id, suppliers:supplier_id(name)')
+    .select('id, fudo_expense_id, cost_total, supplier_id, note, order_id, suppliers:supplier_id(name)')
     .eq('payment_status', 'a_pagar')
     .not('fudo_expense_id', 'is', null)
     .order('id', { ascending: true })
@@ -43,8 +64,11 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     porGasto.set(id, [...(porGasto.get(id) ?? []), r])
   }
 
-  const res: ResultadoPagosFudo = { revisados: 0, pagados: 0, recibosPagados: 0, cancelados: [], ajustados: 0, errores: 0 }
+  const res: ResultadoPagosFudo = { revisados: 0, pagados: 0, recibosPagados: 0, cancelados: [], quitados: [], conProveedor: 0, ajustados: 0, errores: 0 }
   const pagadosDetalle: string[] = []
+  // Proveedores de Fudo vinculados a uno de la app
+  const { data: provs } = await admin.from('suppliers').select('id, fudo_provider_id').not('fudo_provider_id', 'is', null)
+  const proveedorDeFudo = new Map(((provs ?? []) as { id: string; fudo_provider_id: string }[]).map((p) => [String(p.fudo_provider_id), p.id]))
 
   for (const [expenseId, recibos] of [...porGasto].slice(0, MAX_GASTOS)) {
     res.revisados++
@@ -52,7 +76,7 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     try {
       gasto = await fudoFetch(
         // (sin fields[payment]: Fudo no acepta createdAt ahí y el include ya trae todo)
-        `/expenses/${encodeURIComponent(expenseId)}?include=payments&fields[expense]=amount,status,canceled,paymentDate,payments`,
+        `/expenses/${encodeURIComponent(expenseId)}?include=payments&fields[expense]=amount,status,canceled,paymentDate,payments,provider`,
       )
     } catch {
       res.errores++
@@ -63,8 +87,24 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     const total = Math.round(recibos.reduce((a, r) => a + (Number(r.cost_total) || 0), 0) * 100) / 100
 
     if (attrs.canceled === true) {
-      res.cancelados.push({ expenseId, receiptIds: recibos.map((r) => r.id), proveedor, total })
+      const cancelado = { expenseId, receiptIds: recibos.map((r) => r.id), proveedor, total }
+      if (await quitarAnuladoEnFudo(admin, expenseId)) res.quitados.push(cancelado)
+      else res.cancelados.push(cancelado)
       continue
+    }
+
+    // Proveedor cambiado en Fudo después de importar: se copia a lo importado
+    // (y a lo que quedó sin proveedor). Lo que cargó la app con "Llegó" creó
+    // el gasto con su proveedor: no se toca.
+    const provFudo = (gasto.data?.relationships?.provider?.data as { id: string } | null | undefined)?.id
+    const supplierFudo = provFudo ? proveedorDeFudo.get(String(provFudo)) : undefined
+    if (supplierFudo) {
+      const cambiar = recibos.filter((r) => r.supplier_id !== supplierFudo && (!r.supplier_id || soloDelImportador(r)))
+      if (cambiar.length) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: provErr } = await (admin.from('stock_receipts') as any).update({ supplier_id: supplierFudo }).in('id', cambiar.map((r) => r.id))
+        if (!provErr) res.conProveedor++
+      }
     }
     if (attrs.status !== 'PAID') {
       if (await ajustarDiferencia(admin, expenseId, Number(attrs.amount ?? NaN))) res.ajustados++
@@ -97,6 +137,18 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     }
   }
 
+  if (res.quitados.length > 0) {
+    void logAudit(admin, {
+      userId: null,
+      userName: 'Sistema',
+      action: 'receipts_canceled_in_fudo',
+      module: 'pedidos',
+      entityType: 'stock_receipt',
+      description: `Anulados en Fudo, salieron de la deuda: ${res.quitados.map((c) => `${c.proveedor ?? 'Sin proveedor'} $${c.total.toLocaleString('es-AR')} (gasto #${c.expenseId})`).join('; ')}`.slice(0, 1000),
+      metadata: { quitados: res.quitados },
+    })
+  }
+
   if (res.pagados > 0) {
     void logAudit(admin, {
       userId: null,
@@ -109,6 +161,25 @@ export async function sincronizarPagosDesdeFudo(admin: SupabaseClient): Promise<
     })
   }
   return res
+}
+
+/**
+ * Gasto anulado en Fudo cuyos recibos son todos del importador (ninguno de un
+ * pedido de la app ni pagado): salen de la deuda, igual que "Anular" en
+ * Cuentas con un recibo cargado en Fudo (sin tocar stock ni Fudo). El
+ * importador no lo vuelve a traer: saltea los gastos anulados.
+ */
+async function quitarAnuladoEnFudo(admin: SupabaseClient, expenseId: string): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (admin.from('stock_receipts') as any)
+    .select('id, note, order_id, payment_status')
+    .eq('fudo_expense_id', expenseId)
+  if (error) return false
+  const filas = (data ?? []) as { id: number; note: string | null; order_id: number | null; payment_status: string }[]
+  if (filas.length === 0 || !filas.every((r) => soloDelImportador(r) && r.payment_status === 'a_pagar')) return false
+  const { error: quitarErr } = await admin.from('stock_receipts').delete().in('id', filas.map((r) => r.id)).eq('payment_status', 'a_pagar')
+  if (quitarErr) { console.warn('[pagos-fudo] anulado en Fudo sin quitar:', expenseId, quitarErr.message); return false }
+  return true
 }
 
 /**

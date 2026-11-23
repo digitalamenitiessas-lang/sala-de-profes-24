@@ -18,7 +18,7 @@ import { isManagerOrAbove } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { FadeIn } from '@/components/ui/motion'
 import type { CanceladoEnFudo, ResultadoPagosFudo } from '@/lib/compras/pagos-fudo'
-import { SinPrecioSection, faltaPrecio } from '../_components/SinPrecio'
+import { SinPrecioSection, faltaPrecio, incluidoEnGastoFudo } from '../_components/SinPrecio'
 import { ResumenPagar } from '../_components/ResumenPagar'
 import { TODO_EN_FUDO } from '@/lib/compras/datos-gasto'
 
@@ -125,8 +125,12 @@ export default function CuentasPage() {
         setCanceladosFudo(r.cancelados ?? [])
         if (r.recibosPagados > 0) {
           toast.success(`${r.recibosPagados} recibo${r.recibosPagados !== 1 ? 's' : ''} ya pagado${r.recibosPagados !== 1 ? 's' : ''} en Fudo: marcado${r.recibosPagados !== 1 ? 's' : ''} como pagado${r.recibosPagados !== 1 ? 's' : ''}`)
-          void fetchData()
         }
+        const quitados = r.quitados ?? []
+        if (quitados.length > 0) {
+          toast.success(`Anulado${quitados.length !== 1 ? 's' : ''} en Fudo, salió de la deuda: ${quitados.map((c) => `${c.proveedor ?? 'Sin proveedor'} ${fmtMoney(c.total)} (gasto #${c.expenseId})`).join(' · ')}`)
+        }
+        if (r.recibosPagados > 0 || quitados.length > 0 || (r.conProveedor ?? 0) > 0) void fetchData()
       })
       .catch(() => {})
     return () => { alive = false }
@@ -134,7 +138,8 @@ export default function CuentasPage() {
 
   const pending = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && !faltaPrecio(r.cost_total)), [receipts])
   // Cuenta corriente que llegó sin monto: aparte, sin sumar al saldo en $
-  const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total)), [receipts])
+  // (sin los que ya están en el total de un gasto de Fudo: no se les pone precio)
+  const sinPrecio = useMemo(() => receipts.filter((r) => r.payment_status === 'a_pagar' && faltaPrecio(r.cost_total) && !incluidoEnGastoFudo(r)), [receipts])
   // Pagados recientes agrupados por pago (proveedor + día + medio): se paga el
   // total de la factura, no producto por producto. El detalle, al abrir el pago.
   const pagos = useMemo(() => {

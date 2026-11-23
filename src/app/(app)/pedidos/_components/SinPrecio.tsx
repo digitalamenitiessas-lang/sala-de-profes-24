@@ -42,6 +42,17 @@ export function faltaPrecio(costTotal: number | null | undefined): boolean {
   return costTotal == null || !(Number(costTotal) > 0)
 }
 
+/**
+ * Sin monto pero con gasto de Fudo: su plata ya está en el total de ese gasto
+ * (en lo importado de Fudo o en la "Diferencia con Fudo"). No le falta el
+ * precio: ponérselo lo contaría dos veces. Pasa con los productos de un
+ * pedido vinculado a un gasto que el importador ya había traído (Joaquín
+ * 23/11: 9 «sin precio» de los gastos #355 y #370).
+ */
+export function incluidoEnGastoFudo(r: { cost_total: number | null | undefined; fudo_expense_id?: string | null }): boolean {
+  return faltaPrecio(r.cost_total) && Boolean(r.fudo_expense_id)
+}
+
 export function SinPrecioSection({ recibos, onSaved }: { recibos: ReciboSinPrecio[]; onSaved: () => void }) {
   const [editId, setEditId] = useState<number | null>(null)
   const [monto, setMonto] = useState('')
