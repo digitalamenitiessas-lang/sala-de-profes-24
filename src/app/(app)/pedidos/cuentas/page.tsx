@@ -39,9 +39,57 @@ type Receipt = {
   comprobante_numero?: string | null
   /** Con TODO_EN_FUDO, lo que tiene gasto en Fudo se paga allá (acá se marca solo) */
   fudo_expense_id?: string | null
+  /** Nombre del insumo (los importados de Fudo tienen todos la misma nota) */
+  producto: string | null
   supplier_name: string
   supplier_phone: string | null
   supplier_contact: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Lo que se paga en Fudo se muestra por COMPRA (gasto de Fudo), no producto
+// por producto: Bennasar tenía 116 renglones "Importado desde Fudo — entrada
+// directa" que eran 20 compras (23/11). Al tocar una compra se ven sus
+// productos. Lo que se paga desde la app sigue recibo por recibo.
+// ---------------------------------------------------------------------------
+
+type ItemCuenta =
+  | { tipo: 'compra'; key: string; expenseId: string; fecha: string; recibos: Receipt[]; total: number }
+  | { tipo: 'recibo'; key: string; fecha: string; r: Receipt }
+
+function itemsDelGrupo(recibos: Receipt[]): ItemCuenta[] {
+  const compras = new Map<string, Receipt[]>()
+  const out: ItemCuenta[] = []
+  for (const r of recibos) {
+    if (pagaEnFudo(r)) compras.set(String(r.fudo_expense_id), [...(compras.get(String(r.fudo_expense_id)) ?? []), r])
+    else out.push({ tipo: 'recibo', key: `r${r.id}`, fecha: r.received_date, r })
+  }
+  for (const [expenseId, rs] of compras) {
+    out.push({
+      tipo: 'compra', key: `g${expenseId}`, expenseId, recibos: rs,
+      fecha: rs.reduce((m, r) => (r.received_date < m ? r.received_date : m), rs[0].received_date),
+      total: rs.reduce((t, r) => t + (Number(r.cost_total) || 0), 0),
+    })
+  }
+  return out.sort((a, b) => b.fecha.localeCompare(a.fecha))
+}
+
+/** "20 compras" / "3 recibos" / "20 compras · 3 recibos" */
+function cuantosEnGrupo(recibos: Receipt[]): string {
+  const items = itemsDelGrupo(recibos)
+  const c = items.filter((i) => i.tipo === 'compra').length
+  const s = items.length - c
+  return [c ? `${c} compra${c !== 1 ? 's' : ''}` : '', s ? `${s} recibo${s !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ')
+}
+
+/** Qué es el renglón: el producto, o qué parte del gasto de Fudo es */
+function detalleRecibo(r: Receipt): string {
+  if (r.producto) return r.producto
+  const n = r.note ?? ''
+  if (/importe sin detallar/i.test(n)) return 'Impuestos u otros importes'
+  if (/sin detalle de productos/i.test(n)) return 'Compra sin detalle de productos'
+  if (/^Diferencia con Fudo/i.test(n)) return 'Diferencia con Fudo'
+  return n.replace(/^Pedido:\s*/i, '') || `${r.qty} ${r.unit ?? ''}`
 }
 
 type PayState = { id: number; method: 'efectivo' | 'transferencia' | 'tarjeta' | null }
@@ -84,7 +132,7 @@ export default function CuentasPage() {
   const fetchData = useCallback(async () => {
     const { createClient } = await import('@/lib/supabase/client')
     const supabase = createClient()
-    const campos = 'id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, comprobante_numero, fudo_expense_id, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name)'
+    const campos = 'id, supplier_id, qty, unit, cost_total, note, received_date, payment_status, paid_at, payment_method, comprobante_numero, fudo_expense_id, suppliers!stock_receipts_supplier_id_fkey(name, phone, contact_name), stock_items!stock_receipts_stock_item_id_fkey(name)'
     // Los "a pagar" TODOS (antes salían de los últimos 300 recibos y los más
     // viejos quedaban afuera del saldo); de los pagados, solo los recientes.
     // Sin filtrar por cost_total: los "a pagar" sin precio también se traen
@@ -102,9 +150,10 @@ export default function CuentasPage() {
       return
     }
 
-    setReceipts(((data ?? []) as unknown as (Omit<Receipt, 'supplier_name' | 'supplier_phone' | 'supplier_contact'> & { suppliers: { name: string; phone: string | null; contact_name: string | null } | null })[])
+    setReceipts(((data ?? []) as unknown as (Omit<Receipt, 'supplier_name' | 'supplier_phone' | 'supplier_contact' | 'producto'> & { suppliers: { name: string; phone: string | null; contact_name: string | null } | null; stock_items: { name: string } | null })[])
       .map((r) => ({
         ...r,
+        producto: r.stock_items?.name ?? null,
         supplier_name: r.suppliers?.name ?? 'Sin proveedor',
         supplier_phone: r.suppliers?.phone ?? null,
         supplier_contact: r.suppliers?.contact_name ?? null,
@@ -157,6 +206,7 @@ export default function CuentasPage() {
     return [...grupos.values()].slice(0, 15)
   }, [receipts])
   const [pagoAbierto, setPagoAbierto] = useState<string | null>(null)
+  const [compraAbierta, setCompraAbierta] = useState<string | null>(null)
   const [deshaciendoPago, setDeshaciendoPago] = useState<string | null>(null)
   const totalPending = useMemo(() => pending.reduce((acc, r) => acc + (Number(r.cost_total) || 0), 0), [pending])
 
@@ -423,7 +473,7 @@ export default function CuentasPage() {
                     )}
                   </div>
                   <p className="text-[11px] text-[#a39e97]">
-                    {group.receipts.length} recibo{group.receipts.length > 1 ? 's' : ''} · <span className={urgente ? 'font-semibold text-[#d4943a]' : ''}>{labelDias(dias)}</span>
+                    {cuantosEnGrupo(group.receipts)} · <span className={urgente ? 'font-semibold text-[#d4943a]' : ''}>{labelDias(dias)}</span>
                   </p>
                 </div>
                 <span className="shrink-0 text-sm font-bold tabular-nums text-[#d4943a]">{fmtMoney(group.total)}</span>
@@ -506,20 +556,54 @@ export default function CuentasPage() {
                     </div>
                     )
                   })()}
-                  {group.receipts.map((r) => {
+                  {itemsDelGrupo(group.receipts).flatMap((it): ({ compra: Extract<ItemCuenta, { tipo: 'compra' }> } | { r: Receipt; enCompra: boolean })[] =>
+                    it.tipo === 'compra'
+                      ? [{ compra: it }, ...(compraAbierta === it.key ? it.recibos.map((r) => ({ r, enCompra: true })) : [])]
+                      : [{ r: it.r, enCompra: false }],
+                  ).map((fila) => {
+                    // Una compra de Fudo: fecha, qué trajo y el total; al tocarla, sus productos
+                    if ('compra' in fila) {
+                      const c = fila.compra
+                      const abierta = compraAbierta === c.key
+                      const productos = c.recibos.filter((r) => r.producto).map((r) => r.producto as string)
+                      const resumen = productos.length
+                        ? `${productos.slice(0, 3).join(', ')}${productos.length > 3 ? ` y ${productos.length - 3} más` : ''}`
+                        : detalleRecibo(c.recibos[0])
+                      return (
+                        <button
+                          key={c.key}
+                          onClick={() => setCompraAbierta(abierta ? null : c.key)}
+                          className="flex w-full items-center gap-3 px-4 py-2.5 text-left"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-semibold text-[#3d2c24]">
+                              Compra del {format(new Date(`${c.fecha}T12:00:00`), 'd MMM', { locale: es })}
+                              <span className="font-normal text-[#a39e97]"> · {c.recibos.length} renglón{c.recibos.length !== 1 ? 'es' : ''}</span>
+                            </p>
+                            <p className="truncate text-[10px] text-[#a39e97]">{resumen}</p>
+                          </div>
+                          <span className="shrink-0 text-xs font-bold tabular-nums text-[#3d2c24]">{fmtMoney(c.total)}</span>
+                          <span className="shrink-0 rounded-lg bg-[#eef4fc] px-2 py-1 text-[10.5px] font-semibold text-[#2f5d8a]" title={`Gasto #${c.expenseId} en Fudo: cuando se paga allá, acá se marca solo`}>
+                            Se paga en Fudo
+                          </span>
+                          {abierta ? <ChevronUp className="size-3.5 shrink-0 text-[#a39e97]" /> : <ChevronDown className="size-3.5 shrink-0 text-[#a39e97]" />}
+                        </button>
+                      )
+                    }
+                    const { r, enCompra } = fila
                     const isPaying = payState?.id === r.id
                     return (
-                      <div key={r.id} className="px-4 py-2.5">
+                      <div key={r.id} className={cn('px-4 py-2.5', enCompra && 'bg-[#faf8f5] pl-7')}>
                         {/* Fila principal */}
                         <div className="flex items-center gap-3">
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-medium text-[#3d2c24]">
-                              {r.note ?? `${r.qty} ${r.unit ?? ''}`}
+                              {enCompra ? detalleRecibo(r) : r.note ?? `${r.qty} ${r.unit ?? ''}`}
                             </p>
                             <p className="flex flex-wrap items-center gap-x-1.5 text-[10px] text-[#a39e97]">
-                              <span>{format(new Date(`${r.received_date}T12:00:00`), 'd MMM yyyy', { locale: es })}</span>
-                              <span>· {r.qty} {r.unit ?? 'u'}</span>
-                              {r.payment_method && (
+                              {!enCompra && <span>{format(new Date(`${r.received_date}T12:00:00`), 'd MMM yyyy', { locale: es })}</span>}
+                              <span>{enCompra ? '' : '· '}{r.qty} {r.unit ?? 'u'}</span>
+                              {!enCompra && r.payment_method && (
                                 <span className="rounded-full bg-[#fdf6ec] px-1.5 py-0.5 font-semibold text-[#d4943a]">
                                   {methodLabel(r.payment_method)}
                                 </span>
@@ -538,11 +622,11 @@ export default function CuentasPage() {
                               <Pencil className="size-3.5" />
                             </button>
                           )}
-                          {!isPaying && editState?.id !== r.id && (pagaEnFudo(r) ? (
+                          {!isPaying && editState?.id !== r.id && (pagaEnFudo(r) ? (enCompra ? null : (
                             <span className="shrink-0 rounded-lg bg-[#eef4fc] px-2 py-1 text-[10.5px] font-semibold text-[#2f5d8a]" title="Se paga en Fudo: cuando se paga allá, acá se marca solo">
                               Se paga en Fudo
                             </span>
-                          ) : (
+                          )) : (
                             <button
                               onClick={() => setPayState({ id: r.id, method: null })}
                               className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-2.5 py-1.5 text-[11px] font-semibold text-white transition-all active:scale-95"
