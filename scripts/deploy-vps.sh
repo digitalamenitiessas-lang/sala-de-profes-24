@@ -59,6 +59,15 @@ correr() {
     -E NODE_OPTIONS=--max-old-space-size=1800 -E NEXT_DIST_DIR=\$NUEVA "\$@"
 }
 
+# Candado compartido con el deploy de Santa Fe (salaprofeslve, misma VPS):
+# 1 núcleo y ~1,6 GB libres, dos npm ci / next build a la vez pueden tirar
+# servicios. Si el otro está compilando, se espera (hasta 15 min).
+exec 9>/var/lock/next-build.lock
+if ! flock -n 9; then
+  echo "⏳ Otro build en curso en la VPS (Santa Fe): espero a que termine…"
+  flock -w 900 9 || { echo "❌ El otro build no terminó en 15 min: no se compiló nada, la app sigue igual."; exit 1; }
+fi
+
 LOCK=\$(sha256sum $APP/package-lock.json | cut -d' ' -f1)
 if [ "\$(cat $APP/node_modules/.sp24-lock.sha256 2>/dev/null || true)" = "\$LOCK" ]; then
   echo "🔧 Dependencias sin cambios"
@@ -71,6 +80,8 @@ fi
 echo "🏗️  Compilando en \$NUEVA (prioridad baja, ~2 min; la app sigue andando)…"
 correr /opt/node22/bin/node node_modules/next/dist/bin/next build >>/tmp/sp24-deploy.log 2>&1 || { tail -30 /tmp/sp24-deploy.log; echo "❌ Falló el build: la app sigue con la versión anterior (\${ACTIVA:-.next})."; exit 1; }
 rm -f /tmp/sp24-deploy.log
+# Compilado: se libera el candado (el reinicio no consume como el build)
+exec 9>&-
 
 usar() {
   if [ -n "\$1" ]; then echo "NEXT_DIST_DIR=\$1" > \$DIST_ENV.tmp && chmod 644 \$DIST_ENV.tmp && mv \$DIST_ENV.tmp \$DIST_ENV; else rm -f \$DIST_ENV; fi
