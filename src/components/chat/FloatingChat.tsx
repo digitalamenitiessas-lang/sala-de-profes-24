@@ -16,6 +16,8 @@ import {
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
 import { MensajeBot } from '@/components/chat/MensajeBot'
+import { TarjetaInforme, historialConInforme } from '@/components/chat/TarjetaInforme'
+import type { Informe } from '@/lib/informes/esquema'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +37,8 @@ type ChatMessage = {
   timestamp: Date
   actionProposal?: ActionProposal
   actionExecuted?: boolean
+  /** Informe para bajar en PDF (antes el chat flotante lo descartaba) */
+  informe?: Informe
 }
 
 // ---------------------------------------------------------------------------
@@ -172,9 +176,8 @@ export function FloatingChat() {
     setIsThinking(true)
 
     try {
-      const history = [...messages, userMessage]
-        .slice(-10)
-        .map((m) => ({ role: m.role, content: m.content }))
+      // El último informe viaja entero para que se pueda pedir "agregale…" o "cambiale…"
+      const history = historialConInforme([...messages, userMessage].slice(-10))
 
       const res = await fetch('/api/chatbot', {
         method: 'POST',
@@ -196,6 +199,7 @@ export function FloatingChat() {
           timestamp: new Date(),
           actionProposal: data.actionProposal ?? undefined,
           actionExecuted: data.actionExecuted ?? undefined,
+          informe: data.informe ?? undefined,
         },
       ])
 
@@ -522,6 +526,7 @@ export function FloatingChat() {
                     ) : (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     )}
+                    {msg.informe && <TarjetaInforme informe={msg.informe} chico />}
 
                     {/* Action confirmation buttons */}
                     {msg.actionProposal && !msg.actionExecuted && (
