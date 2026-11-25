@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { useProfileContext } from '@/lib/hooks/use-profile'
 import { AnimatePresence, motion } from '@/components/ui/motion'
+import { MensajeBot } from '@/components/chat/MensajeBot'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,64 +35,6 @@ type ChatMessage = {
   timestamp: Date
   actionProposal?: ActionProposal
   actionExecuted?: boolean
-}
-
-// ---------------------------------------------------------------------------
-// Markdown renderer (lightweight)
-// ---------------------------------------------------------------------------
-
-function renderMarkdown(text: string): React.ReactNode {
-  const lines = text.split('\n')
-  const elements: React.ReactNode[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    if (line.startsWith('### ')) {
-      elements.push(<h4 key={i} className="mb-1 mt-2.5 text-xs font-bold first:mt-0">{parseBold(line.slice(4))}</h4>)
-      continue
-    }
-    if (line.startsWith('## ')) {
-      elements.push(<h3 key={i} className="mb-1 mt-2.5 text-[13px] font-bold first:mt-0">{parseBold(line.slice(3))}</h3>)
-      continue
-    }
-    if (line.startsWith('- ')) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 text-[10px] leading-relaxed">•</span>
-          <span>{parseBold(line.slice(2))}</span>
-        </div>,
-      )
-      continue
-    }
-    const numMatch = line.match(/^(\d+)\.\s(.+)/)
-    if (numMatch) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 font-semibold text-[#006d5a]">{numMatch[1]}.</span>
-          <span>{parseBold(numMatch[2])}</span>
-        </div>,
-      )
-      continue
-    }
-    if (line.trim() === '') {
-      elements.push(<div key={i} className="h-1" />)
-      continue
-    }
-    elements.push(<p key={i} className="py-0.5">{parseBold(line)}</p>)
-  }
-
-  return <>{elements}</>
-}
-
-function parseBold(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
-    }
-    return part
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -575,7 +518,7 @@ export function FloatingChat() {
                     }`}
                   >
                     {msg.role === 'assistant' ? (
-                      <div className="whitespace-pre-wrap">{renderMarkdown(msg.content)}</div>
+                      <MensajeBot texto={msg.content} role={profile.role} tamano="chico" onIr={() => setOpen(false)} />
                     ) : (
                       <p className="whitespace-pre-wrap">{msg.content}</p>
                     )}

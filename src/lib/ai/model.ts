@@ -1,9 +1,13 @@
 // Modelo de IA para todas las llamadas a OpenRouter. Se puede cambiar sin tocar
 // código con la variable OPENROUTER_MODEL (ids en https://openrouter.ai/models).
-// Ojo al pasar a Claude Sonnet 5 o posterior: rechazan temperature (400) y
-// razonan por defecto dentro de max_tokens, y las llamadas mandan temperature
-// con topes de 200-1024 tokens. Probar con una clave real antes de cambiarlo.
-export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-4'
+// anthropic/claude-sonnet-4 dejó de existir en OpenRouter (404, nov/2026; visto
+// en Santa Fe, 86a3473): por defecto va Sonnet 5.5. Sonnet 5.5 razona siempre y
+// no acepta temperature: el chat de La Vieja ya manda reasoning bajo, sin
+// temperature y con margen de tokens. Las otras llamadas (briefing, análisis
+// de ventas, mermas, pedidos, prioridades de stock, plan de producción y /ask)
+// todavía mandan temperature con topes de 200-1024 tokens: probarlas con una
+// clave real y adaptarlas igual que el chat.
+export const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'anthropic/claude-sonnet-5.5'
 
 // Encabezados que OpenRouter usa para identificar la app en su panel.
 export const OPENROUTER_APP_HEADERS = {

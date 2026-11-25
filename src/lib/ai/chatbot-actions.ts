@@ -814,7 +814,7 @@ const ACTION_PERMISSIONS: Record<ActionIntent, string[]> = {
 
 // What stock source each role accesses
 const ROLE_STOCK_SOURCE: Record<string, 'cocina' | 'barra'> = {
-  barista: 'barra',
+  barista: 'cocina', // la barra vive en stock_items (área barra), sincronizada con Fudo; bar_stock_items quedó sin uso
   chef: 'cocina',
   cocina: 'cocina',
   encargado: 'cocina', // Encargado sees general stock (cocina table)

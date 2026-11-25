@@ -10,10 +10,14 @@ import {
   Loader2,
   Check,
   X,
+  FileText,
+  Download,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useProfileContext } from '@/lib/hooks/use-profile'
+import type { Informe } from '@/lib/informes/esquema'
+import { MensajeBot } from '@/components/chat/MensajeBot'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -26,6 +30,7 @@ type ChatMessage = {
   timestamp: Date
   actionProposal?: ActionProposal
   actionExecuted?: boolean
+  informe?: Informe
 }
 
 type ActionProposal = {
@@ -33,74 +38,6 @@ type ActionProposal = {
   items?: { name: string; quantity: string }[]
   message?: string
   urgency?: string
-}
-
-// ---------------------------------------------------------------------------
-// Simple markdown renderer for bot messages
-// ---------------------------------------------------------------------------
-
-function renderMarkdown(text: string): React.ReactNode {
-  const lines = text.split('\n')
-  const elements: React.ReactNode[] = []
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-
-    // Headers
-    if (line.startsWith('### ')) {
-      elements.push(<h4 key={i} className="mb-1 mt-3 text-xs font-bold first:mt-0">{parseBoldAndEmoji(line.slice(4))}</h4>)
-      continue
-    }
-    if (line.startsWith('## ')) {
-      elements.push(<h3 key={i} className="mb-1.5 mt-3 text-sm font-bold first:mt-0">{parseBoldAndEmoji(line.slice(3))}</h3>)
-      continue
-    }
-
-    // List items
-    if (line.startsWith('- ')) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 text-[10px] leading-relaxed">•</span>
-          <span>{parseBoldAndEmoji(line.slice(2))}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Numbered list
-    const numMatch = line.match(/^(\d+)\.\s(.+)/)
-    if (numMatch) {
-      elements.push(
-        <div key={i} className="flex gap-1.5 py-0.5 pl-1">
-          <span className="shrink-0 font-semibold text-[#006d5a]">{numMatch[1]}.</span>
-          <span>{parseBoldAndEmoji(numMatch[2])}</span>
-        </div>
-      )
-      continue
-    }
-
-    // Empty line = spacer
-    if (line.trim() === '') {
-      elements.push(<div key={i} className="h-1.5" />)
-      continue
-    }
-
-    // Regular paragraph
-    elements.push(<p key={i} className="py-0.5">{parseBoldAndEmoji(line)}</p>)
-  }
-
-  return <>{elements}</>
-}
-
-function parseBoldAndEmoji(text: string): React.ReactNode {
-  // Parse **bold** markers
-  const parts = text.split(/(\*\*[^*]+\*\*)/g)
-  return parts.map((part, i) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
-    }
-    return part
-  })
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +104,8 @@ function getRoleGreeting(role?: string): string {
 // Page
 // ---------------------------------------------------------------------------
 
+const CLAVE_CHARLA = 'asistente-mensajes'
+
 export default function AsistentePage() {
   const { profile, loading: profileLoading } = useProfileContext()
 
@@ -176,6 +115,22 @@ export default function AsistentePage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // La charla sobrevive a ir a otra pantalla con «Ir a…» y volver (como el
+  // chat flotante). Se lee al montar, no al primer render, para que el HTML
+  // del servidor y el del navegador coincidan.
+  const charlaCargada = useRef(false)
+  useEffect(() => {
+    try {
+      const guardada = sessionStorage.getItem(CLAVE_CHARLA)
+      if (guardada) setMessages((JSON.parse(guardada) as ChatMessage[]).map((m) => ({ ...m, timestamp: new Date(m.timestamp) })))
+    } catch { /* sin storage: arranca vacía */ }
+    charlaCargada.current = true
+  }, [])
+  useEffect(() => {
+    if (!charlaCargada.current || messages.length === 0) return
+    try { sessionStorage.setItem(CLAVE_CHARLA, JSON.stringify(messages.slice(-20))) } catch { /* storage lleno */ }
+  }, [messages])
 
   // -------------------------------------------------------------------------
   // Auto-scroll al ultimo mensaje
@@ -206,9 +161,15 @@ export default function AsistentePage() {
 
     try {
       // Build conversation history for context
-      const history = [...messages, userMessage]
-        .slice(-10)
-        .map((m) => ({ role: m.role, content: m.content }))
+      const recientes = [...messages, userMessage].slice(-10)
+      // El último informe viaja entero para que se pueda pedir "agregale…" o "cambiale…"
+      const ultimoInforme = recientes.findLast((m) => m.informe)
+      const history = recientes.map((m) => ({
+        role: m.role,
+        content: m === ultimoInforme
+          ? `${m.content}\n\n[Informe PDF que armaste en este mensaje:]\n\`\`\`INFORME_JSON\n${JSON.stringify(m.informe).slice(0, 15000)}\n\`\`\``
+          : m.content,
+      }))
 
       const res = await fetch('/api/chatbot', {
         method: 'POST',
@@ -229,6 +190,7 @@ export default function AsistentePage() {
         timestamp: new Date(),
         actionProposal: data.actionProposal ?? undefined,
         actionExecuted: data.actionExecuted ?? undefined,
+        informe: data.informe ?? undefined,
       }
 
       setMessages((prev) => [...prev, botMessage])
@@ -427,7 +389,7 @@ export default function AsistentePage() {
               }`}
             >
               {msg.role === 'assistant' ? (
-                <div className="whitespace-pre-wrap">{renderMarkdown(msg.content)}</div>
+                <MensajeBot texto={msg.content} role={profile.role} />
               ) : (
                 <p className="whitespace-pre-wrap">{msg.content}</p>
               )}
@@ -452,6 +414,8 @@ export default function AsistentePage() {
                   </button>
                 </div>
               )}
+
+              {msg.informe && <TarjetaInforme informe={msg.informe} />}
 
               {msg.actionExecuted && (
                 <div className="mt-2 flex items-center gap-1 text-[10px] font-semibold text-[#006d5a]">
@@ -533,6 +497,64 @@ export default function AsistentePage() {
           )}
         </Button>
       </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Informe para bajar en PDF (lo arma La Vieja con el bloque INFORME_JSON)
+// ---------------------------------------------------------------------------
+
+function TarjetaInforme({ informe }: { informe: Informe }) {
+  const [estado, setEstado] = useState<'listo' | 'bajando' | 'error'>('listo')
+
+  async function descargar() {
+    setEstado('bajando')
+    try {
+      const res = await fetch('/api/asistente/informe-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ informe }),
+      })
+      if (!res.ok) throw new Error(String(res.status))
+      const blob = await res.blob()
+      const nombre = res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1] ?? 'Informe - LVE 24.pdf'
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = nombre
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
+      setEstado('listo')
+    } catch {
+      setEstado('error')
+    }
+  }
+
+  const tablas = informe.secciones.filter((s) => s.tabla).length
+  return (
+    <div className="mt-3 flex items-center gap-3 rounded-xl border border-[#d5e6dc] bg-[#f1f7f3] p-3">
+      <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#006d5a] text-white">
+        <FileText className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-bold text-[#3d2c24]">{informe.titulo}</p>
+        <p className="text-[10px] text-[#5c4a42]">
+          {estado === 'error'
+            ? 'No se pudo armar el PDF. Probá de nuevo.'
+            : `Informe en PDF · ${informe.secciones.length} ${informe.secciones.length === 1 ? 'sección' : 'secciones'}${tablas ? ` · ${tablas} ${tablas === 1 ? 'tabla' : 'tablas'}` : ''}`}
+        </p>
+      </div>
+      <button
+        onClick={descargar}
+        disabled={estado === 'bajando'}
+        className="flex shrink-0 items-center gap-1 rounded-lg bg-[#006d5a] px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-[#005a4a] disabled:opacity-60"
+      >
+        {estado === 'bajando' ? <Loader2 className="size-3 animate-spin" /> : <Download className="size-3" />}
+        {estado === 'bajando' ? 'Armando…' : 'Descargar PDF'}
+      </button>
     </div>
   )
 }

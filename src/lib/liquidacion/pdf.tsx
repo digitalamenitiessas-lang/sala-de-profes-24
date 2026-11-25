@@ -16,7 +16,7 @@ import type { Liquidacion } from '@/lib/liquidacion/calcular'
 // o la carpeta public/ cuando se genera localmente.
 // ---------------------------------------------------------------------------
 
-const C = {
+export const C = {
   verde: '#00593b',
   verdeSuave: '#e8f2ec',
   crema: '#f7f3ec',
@@ -33,10 +33,10 @@ const C = {
 // Por URL se agrega una versión: evita respuestas viejas guardadas en la caché
 // de Vercel (las fuentes llegaron a quedar cacheadas como redirección a /login).
 const VERSION_ASSETS = '2'
-const asset = (assets: string, ruta: string) => `${assets}/${ruta}${assets.startsWith('http') ? `?v=${VERSION_ASSETS}` : ''}`
+export const asset = (assets: string, ruta: string) => `${assets}/${ruta}${assets.startsWith('http') ? `?v=${VERSION_ASSETS}` : ''}`
 
 let fuentesListas = ''
-function registrarFuentes(assets: string) {
+export function registrarFuentes(assets: string) {
   if (fuentesListas === assets) return
   Font.register({
     family: 'Barlow',
