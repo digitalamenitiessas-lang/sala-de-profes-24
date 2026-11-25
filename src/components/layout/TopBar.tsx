@@ -40,6 +40,7 @@ export function TopBar() {
     '/equipo/asistencia': 'Asistencia',
     '/equipo/turnos': 'Turnos',
     '/cocina/produccion': 'Producción',
+    '/cocina/horneado': 'Horneado',
     '/cocina/stock': 'Stock Cocina',
     '/stock/conteo': 'Conteo',
     '/stock/rendimiento': 'Rendimiento',

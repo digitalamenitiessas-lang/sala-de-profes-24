@@ -31,6 +31,7 @@ import {
   ScanFace,
   Sparkles,
   Wifi,
+  Croissant,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AppRole } from '@/types/database'
@@ -128,6 +129,7 @@ const SOCIO_MORE: ExpandableNavItem = {
         { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Tareas y control del servicio' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear, qué sobró y el control contra Fudo' },
         { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Control de roturas, faltantes y reposición' },
       ],
@@ -167,6 +169,7 @@ const ENCARGADO_MORE: ExpandableNavItem = {
         { label: 'Descartables', href: '/stock/descartables', icon: Package, description: 'Vasos y tapas que se descuentan solos al vender para llevar' },
         { label: 'Salón', href: '/salon', icon: Armchair, description: 'Servicio y tareas del salón' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Órdenes y plan de producción' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear, qué sobró y el control contra Fudo' },
         { label: 'Recetario de platos', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato: costo, compras y armado' },
         { label: 'Vajilla', href: '/vajilla', icon: Wine, description: 'Faltantes, roturas y reposición' },
       ],
@@ -192,6 +195,7 @@ const CHEF_MORE: ExpandableNavItem = {
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato y cómo se arma' },
@@ -218,6 +222,7 @@ const COCINA_MORE: ExpandableNavItem = {
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tareas con horario: asignadas a vos, pasos y foto' },
         { label: 'Producción', href: '/cocina/produccion', icon: Hammer, description: 'Registrar producción hecha' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Contar elaborados', href: '/cocina/elaborados?tab=contar', icon: ClipboardList, description: 'Cargar cuánto hay de cada elaborado' },
         { label: 'Stock cocina', href: '/stock?area=cocina', icon: Package, description: 'Contar y ver faltantes del sector' },
         { label: 'Recetario', href: '/recetario', icon: BookOpen, description: 'Qué lleva cada plato y cómo se arma' },
@@ -242,6 +247,7 @@ const BARISTA_MORE: ExpandableNavItem = {
       label: 'Herramientas',
       items: [
         { label: 'Tolva', href: '/tolva', icon: Coffee, description: 'Control de la tolva del día' },
+        { label: 'Horneado', href: '/cocina/horneado', icon: Croissant, description: 'Medialunas, bollitos y tortillas: cuántas hornear y qué sobró' },
         { label: 'Protocolos', href: '/protocolos', icon: Sparkles, description: 'Tolva, descartables y baño: tareas con horario' },
         { label: 'Sugerir compra', href: '/sugerir-compra', icon: ShoppingCart, description: '¿Se acaba algo? Avisale al encargado para que lo pida' },
         { label: 'Descartables', href: '/stock?area=descartables', icon: Package, description: 'Contar vasos y tapas · avisar faltantes' },
